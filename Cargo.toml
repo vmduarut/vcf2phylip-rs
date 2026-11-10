@@ -1,0 +1,17 @@
+[package]
+name = "vcf2phylip-rs"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+description = "Streaming VCF/BCF inspection foundation for a future phylogenetic alignment converter"
+license = "GPL-3.0-only"
+
+[dependencies]
+anyhow = "=1.0.104"
+clap = { version = "=4.6.7", features = ["derive"] }
+flate2 = "=1.1.11"
+noodles = { version = "=0.119.0", features = ["vcf", "bcf", "bgzf"] }
+thiserror = "=2.0.21"
+
+[dev-dependencies]
+tempfile = "=3.27.0"
