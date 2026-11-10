@@ -1,10 +1,11 @@
-//! Reusable conversion entry point. Input is streamed, but the matrix is unbounded RAM.
+//! Reusable conversion with streamed provenance and selectable matrix storage.
 use crate::{
     cli::Cli,
     filter::{ProcessingConfig, Stats},
-    matrix::Matrix,
+    matrix::{Alignment, Matrix},
     output::{self, Staged},
     reader::VariantReader,
+    storage::{Storage, StorageMode},
     writers,
 };
 use anyhow::{Context, Result, ensure};
@@ -19,6 +20,7 @@ pub struct ConversionReport {
     pub samples: usize,
     pub matrix_bytes: usize,
     pub outputs: Vec<PathBuf>,
+    pub storage: StorageMode,
 }
 
 /// Build in original sample order, retaining only accepted nucleotide loci.
@@ -28,7 +30,22 @@ pub fn collect(
     config: &ProcessingConfig,
     sites: Option<&mut dyn Write>,
 ) -> Result<(Matrix, Stats)> {
-    let mut matrix = Matrix::new(reader.header().sample_names().iter().cloned().collect())?;
+    let matrix = Storage::Memory(Matrix::new(
+        reader.header().sample_names().iter().cloned().collect(),
+    )?);
+    let (matrix, stats) = collect_into(reader, config, sites, matrix)?;
+    let Storage::Memory(matrix) = matrix else {
+        unreachable!()
+    };
+    Ok((matrix, stats))
+}
+
+fn collect_into(
+    reader: &mut VariantReader,
+    config: &ProcessingConfig,
+    sites: Option<&mut dyn Write>,
+    mut matrix: Storage,
+) -> Result<(Storage, Stats)> {
     let mut sites = sites.map(BufWriter::new);
     if let Some(writer) = &mut sites {
         writeln!(writer, "#CHROM\tPOS\tNUM_SAMPLES")?;
@@ -66,6 +83,7 @@ pub fn collect(
     if let Some(writer) = &mut sites {
         writer.flush()?;
     }
+    matrix.finish()?;
     Ok((matrix, stats))
 }
 
@@ -80,6 +98,12 @@ pub fn convert(cli: &Cli) -> Result<ConversionReport> {
     let config = cli.validate_samples(&samples)?;
     // Validate every identifier before any output directory or temporary file.
     Matrix::new(samples.clone())?;
+    let matrix = Storage::new(
+        samples.clone(),
+        cli.storage,
+        cli.memory_limit.unwrap_or(64 * 1024 * 1024),
+        cli.temp_dir.as_deref(),
+    )?;
     for warning in &config.warnings {
         eprintln!("warning: {warning}");
     }
@@ -114,7 +138,7 @@ pub fn convert(cli: &Cli) -> Result<ConversionReport> {
     } else {
         None
     };
-    let (matrix, stats) = collect(&mut reader, &config.processing, sites)?;
+    let (matrix, stats) = collect_into(&mut reader, &config.processing, sites, matrix)?;
     let mut index = 0;
     if !cli.phylip_disable {
         writers::phylip::write(staged[index].file.as_file_mut(), &matrix, &order)?;
@@ -130,7 +154,11 @@ pub fn convert(cli: &Cli) -> Result<ConversionReport> {
     Ok(ConversionReport {
         stats,
         samples: samples.len(),
-        matrix_bytes: matrix.payload_bytes(),
+        matrix_bytes: matrix
+            .sites()
+            .checked_mul(samples.len())
+            .context("matrix size overflow")?,
+        storage: cli.storage,
         outputs,
     })
 }

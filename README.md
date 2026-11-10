@@ -1,9 +1,10 @@
-# vcf2phylip-rs — Milestone 3
+# vcf2phylip-rs — Milestone 5
 
 An independently designed Rust library and thin CLI for **streaming VCF/BCF
-inspection and scientific genotype processing**, plus **in-memory FASTA and
-relaxed PHYLIP conversion**. NEXUS/SNAPP and bounded-memory storage are not yet
-implemented. This is not a claim of exact upstream output compatibility.
+inspection and scientific genotype processing**, plus **FASTA and
+relaxed PHYLIP conversion**, with optional bounded-cell-buffer disk storage.
+Milestone 4 was explicitly skipped: **both DNA NEXUS and SNAPP remain deferred**.
+This is not a claim of exact upstream output compatibility.
 
 ## Build and inspect
 
@@ -15,6 +16,7 @@ cargo run --locked -- -i variants.vcf --inspect --partial-missing called-alleles
 cargo run --locked -- -i variants.vcf.gz --output-folder alignments
 cargo run --locked -- -i variants.bcf -f -w -o outgroup --output-prefix study
 cargo run --locked -- -i variants.vcf -p -f -r --seed 42
+cargo run --locked -- -i variants.vcf --storage disk --memory-limit 64MiB --temp-dir /existing/scratch -f -w
 cargo run --locked -- --help
 ```
 
@@ -33,8 +35,8 @@ transitively, and tempfile brings randomness dependencies for staging filenames.
 - Content-based detection (extensions are ignored): plain VCF, gzip VCF,
   concatenated/multimember gzip VCF, BGZF VCF, raw or gzip/BGZF BCF 2.2.
 - Reads one record at a time with noodles adapters. Inspection memory scales
-  with header and current record; conversion additionally retains the entire
-  nucleotide matrix in RAM (see resource limits below). No index required.
+  with header and current record; conversion uses the selected matrix backend
+  (see resource limits below). No input index required.
 - Requires a valid header, at least one sample, and `FORMAT/GT` declared as
   `Number=1,Type=String`. Empty/duplicate sample names are errors. Names remain
   unchanged, including `./`, punctuation and spaces in inspection. Conversion
@@ -66,7 +68,7 @@ transitively, and tempfile brings randomness dependencies for staging filenames.
 
 Without `--inspect`, relaxed sequential PHYLIP is the default. `-f` adds FASTA;
 `-p -f` selects FASTA only. `-p` alone is an error. `-n` and `-b` fail before
-output effects (NEXUS/SNAPP are M4). Both writers use the same nucleotide matrix.
+output effects (both M4 writers are deferred). Both writers use the same nucleotide matrix.
 PHYLIP starts with `S L`, then full names separated from unwrapped sequences by
 two spaces. FASTA wraps sequence lines at 80 bases. Identifiers retain their
 exact UTF-8 bytes: no truncation, cleaning, escaping or remapping. Empty/duplicate
@@ -105,16 +107,48 @@ publication can leave earlier outputs finalized; diagnostics state this, and no
 rollback deletes potentially replaced files. No durability across power loss,
 cleanup after SIGKILL, or protection from a hostile directory owner is promised.
 
-### Resource limits (M3)
+### Storage and resource limits (M5)
 
-Conversion stores one growable `Vec<u8>` per sample, no second transposed matrix
+The memory backend stores one growable `Vec<u8>` per sample, no second transposed matrix
 or binary matrix. Payload is S × L bytes, with checked dimensions; allocator
 capacity, sample names, header/current record, metadata and I/O buffers add RAM.
 For example 1,000 samples × 1,000,000 retained loci need at least 1 GB just for
 sequence payload. Success reports payload bytes, **not peak RAM**. Memory is
 unbounded in the number of loci; allocation failures are reported where possible,
 but process/OS OOM termination is possible. Use datasets that fit available RAM.
-Bounded disk-backed storage is M5, not a feature of this milestone.
+
+`--storage memory` is the compatibility default and is **not bounded**.
+`--storage disk` uses a single RAII-managed, restrictive-permission temporary
+file; `--temp-dir` selects an **existing** directory, otherwise the OS temporary
+directory is used. Output/site staging still lives in the output directory,
+not `--temp-dir`. Ordinary errors remove both spool and staging files.
+`--memory-limit` accepts positive integer bytes (optional `B`) or binary
+`KiB`, `MiB`, `GiB` suffixes (case sensitive, no spaces). Default disk budget:
+64 MiB. Explicit budget/temp options require disk mode; inspection rejects them.
+There is no automatic backend switch or silent fallback.
+
+The disk budget covers the **actual capacity of the one cell/tile vector**,
+including the reused output-read buffer, not entire RSS. With S samples its
+minimum is S bytes. Tile width T = min(floor(budget/S), 65,536) loci. A tile
+allocates exactly S×T requested bytes (allocator-reported capacity is checked
+against budget); no other cell vectors or full-sample reads are allocated by
+storage. Dimensions/offsets are checked. Header/sample names, parsing and genotype
+buffers for the current record, O(S) output-order validation, fixed writer/site
+buffers and allocator/runtime overhead are **outside this budget**. Large headers,
+single records/ploidies and OS page cache can still consume substantial memory.
+This is a bounded matrix path, **not a strict RSS/OOM guarantee**.
+
+Tiles flush sample-contiguous segments in original sample order. Uniform tile
+offsets and the retained-site count determine every read; there is no growing
+tile index or retained-record list. The final partial tile is packed on EOF.
+Disk spool logical size is S×L bytes; allocated blocks may differ. Each writer
+reads only each sample's own tile segments (O(S×L) bytes per format, with
+O(S×ceil(L/T)) seeks), not the entire spool once per sample. Tiny budgets can
+cause many seeks/writes. FASTA wrapping persists across chunks; PHYLIP streams
+unwrapped rows. `-w` streams directly into its staged sidecar while processing,
+so it adds disk usage but no per-locus memory list. Multiple output files add
+staging disk space and one read pass each. Success payload bytes are neither
+temporary-disk high-water nor peak RSS. See [benchmarking](docs/benchmarking.md).
 
 This is structural/genotype validation, not a complete VCF specification
 validator or scientific quality-control tool. It does not impose sorted loci,
@@ -145,6 +179,12 @@ statistics/output paths; `conversion::collect` builds a `matrix::Matrix` from a
 reader and processing config, optionally streaming a site report to `Write`.
 `writers::{fasta,phylip}::write` accept generic `Write`, a matrix and a sample
 index permutation, and propagate buffered write/flush failures.
+Both writers now accept any `matrix::Alignment` (existing `&Matrix` calls remain
+valid). Its `samples`, `sites`, and fallible `row_chunks` callback expose bounded
+reads without requiring a full row. `storage::DiskMatrix::{new,append,finish}`
+implements the same trait; finish must precede reading. `Storage` selects either
+backend. The public `collect` API intentionally remains in-memory; CLI conversion
+shares the same filter/collection loop for both backends.
 
 ## Scientific contract
 
@@ -200,8 +240,9 @@ scheme, not upstream Python RNG equivalence.
   resolution and scientific inspection counters.
 - M3 complete: in-memory nucleotide matrix, stable sample ordering, FASTA/relaxed
   PHYLIP, retained-site reporting and staged no-clobber output safety.
-- M4 pending: nucleotide NEXUS and binary NEXUS/SNAPP writers.
-- M5 pending: bounded-memory disk-backed matrix storage.
+- M4 skipped/deferred: both nucleotide NEXUS and binary NEXUS/SNAPP writers.
+- M5 complete: bounded-cell-buffer tiled disk storage and reproducible opt-in
+  benchmark harness (no performance superiority claim).
 
 ## Development checks
 

@@ -17,7 +17,7 @@ legal advice or a declaration of permission to relicense upstream material.
 
 ## Argument vocabulary retained
 
-| Argument | Milestone 3 status |
+| Argument | Milestone 5 status |
 | --- | --- |
 | `-i`, `--input` | Required input path |
 | `-m`, `--min-samples-locus` | Positive integer, default 4, capped with warning; independently applied to DNA/binary |
@@ -33,6 +33,9 @@ legal advice or a declaration of permission to relicense upstream material.
 | `-w`, `--write-used-sites` | Retained nucleotide coordinates and called-sample count |
 | `-v`, `--version` | This Rust package's version, not upstream's version |
 | `--inspect` | Diagnostics only; incompatible with output flags |
+| `--storage` | `memory` (unbounded default) or `disk` (bounded cell buffer) |
+| `--memory-limit` | Disk-only cell-vector capacity budget; default 64 MiB; bytes/B/KiB/MiB/GiB |
+| `--temp-dir` | Disk-only existing matrix spool directory; default OS temp |
 
 Names, errors, output text, compression detection and multiple outgroups
 intentionally differ from upstream. In particular, input sample names are not
@@ -62,8 +65,10 @@ hand-computed synthetic tests, not upstream output-equivalence claims. See the
 
 ## Planned, not shipped
 
-M4 will add nucleotide NEXUS/binary NEXUS/SNAPP; M5 will add bounded disk-backed
-matrix storage. M3 currently uses unbounded RAM for one sequence per sample.
+M4 was explicitly skipped: both nucleotide NEXUS and binary NEXUS/SNAPP remain
+deferred. M5 adds optional bounded-cell-buffer disk-backed storage; the default
+memory backend remains unbounded in loci. The same processing and writer paths
+produce identical backend outputs; this is not upstream byte compatibility.
 Scientific inspection remains a separate no-write mode.
 The independently designed implementation and synthetic tests do not copy
 upstream Python algorithms or sequence fixtures.

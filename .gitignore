@@ -1,2 +1,3 @@
 /target/
 /.tgrep/
+__pycache__/

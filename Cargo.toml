@@ -3,7 +3,7 @@ name = "vcf2phylip-rs"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.99"
-description = "VCF/BCF inspection and in-memory FASTA/relaxed PHYLIP conversion"
+description = "VCF/BCF inspection and memory/disk FASTA/relaxed PHYLIP conversion"
 license = "GPL-3.0-only"
 
 [dependencies]

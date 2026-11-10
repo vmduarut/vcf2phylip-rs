@@ -528,6 +528,174 @@ fn conversion_fixture() -> String {
 }
 
 #[test]
+fn disk_memory_identical_across_tiles_transports_and_policies() {
+    use vcf2phylip_rs::{conversion::convert, storage::StorageMode};
+    let records: String = (0..163)
+        .map(|i| {
+            format!(
+                "chr1\t{}\t.\tA\tC\t.\tPASS\t.\tGT\t{}\n",
+                i + 1,
+                ["0|1\t1/1\t./.", "0/1/1\t0/./.\t1|1|0"][i % 2]
+            )
+        })
+        .collect();
+    let text = data("A\tB\tC", &records);
+    for bytes in [
+        text.as_bytes().to_vec(),
+        gzip(text.as_bytes()),
+        bgzf(text.as_bytes()),
+        bcf_bytes(&text),
+    ] {
+        for random in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let spool = tempfile::tempdir().unwrap();
+            let input = dir.path().join("input");
+            std::fs::write(&input, &bytes).unwrap();
+            let mut expected = None;
+            for budget in [
+                None,
+                Some(3),
+                Some(6),
+                Some(21),
+                Some(240),
+                Some(489),
+                Some(600),
+            ] {
+                let folder = dir.path().join(format!("out{budget:?}"));
+                let mut args = vec![
+                    "app",
+                    "-i",
+                    input.to_str().unwrap(),
+                    "--output-folder",
+                    folder.to_str().unwrap(),
+                    "--output-prefix",
+                    "test",
+                    "-m",
+                    "1",
+                    "-f",
+                    "-w",
+                    "-o",
+                    "C",
+                    "--partial-missing",
+                    "called-alleles",
+                ];
+                if random {
+                    args.extend(["-r", "--seed", "42"]);
+                }
+                let mut cli = Cli::try_parse_from(args).unwrap();
+                if let Some(budget) = budget {
+                    cli.storage = StorageMode::Disk;
+                    cli.memory_limit = Some(budget);
+                    cli.temp_dir = Some(spool.path().into());
+                }
+                let report = convert(&cli).unwrap();
+                let outputs = report
+                    .outputs
+                    .iter()
+                    .map(|p| std::fs::read(p).unwrap())
+                    .collect::<Vec<_>>();
+                let actual = (outputs, format!("{:?}", report.stats), report.matrix_bytes);
+                if let Some(expected) = &expected {
+                    assert_eq!(expected, &actual);
+                } else {
+                    expected = Some(actual);
+                }
+                assert_eq!(std::fs::read_dir(spool.path()).unwrap().count(), 0);
+                assert!(
+                    convert(&cli)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("existing output")
+                );
+                assert_eq!(std::fs::read_dir(spool.path()).unwrap().count(), 0);
+            }
+        }
+    }
+}
+
+#[test]
+fn disk_errors_cleanup_and_budget_validation() {
+    use vcf2phylip_rs::{conversion::convert, storage::StorageMode};
+    for text in [
+        data("S", ""),
+        data("S", "chr1\t1\t.\tA\tAT\t.\tPASS\t.\tGT\t0\n"),
+        format!(
+            "{}bad late record\n",
+            data("S", "chr1\t1\t.\tA\tC\t.\tPASS\t.\tGT\t0\n")
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let spool = tempfile::tempdir().unwrap();
+        let input = dir.path().join("input");
+        std::fs::write(&input, text).unwrap();
+        let folder = dir.path().join("out");
+        let mut cli = Cli::try_parse_from([
+            "app",
+            "-i",
+            input.to_str().unwrap(),
+            "--output-folder",
+            folder.to_str().unwrap(),
+            "-f",
+            "-w",
+        ])
+        .unwrap();
+        cli.storage = StorageMode::Disk;
+        cli.memory_limit = Some(1);
+        cli.temp_dir = Some(spool.path().into());
+        assert!(convert(&cli).is_err());
+        assert_eq!(std::fs::read_dir(spool.path()).unwrap().count(), 0);
+        assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 0);
+        cli.temp_dir = Some(spool.path().join("nonexistent"));
+        assert!(
+            convert(&cli)
+                .unwrap_err()
+                .to_string()
+                .contains("creating matrix spool")
+        );
+    }
+    use vcf2phylip_rs::storage::DiskMatrix;
+    let dir = tempfile::tempdir().unwrap();
+    assert!(DiskMatrix::new(vec!["A".into(), "B".into()], 1, Some(dir.path())).is_err());
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    for value in ["0", "-1", "1GB", "1.5MiB", "18446744073709551616GiB"] {
+        assert!(
+            Cli::try_parse_from([
+                "app",
+                "-i",
+                "x",
+                "--storage",
+                "disk",
+                "--memory-limit",
+                value
+            ])
+            .is_err()
+        );
+    }
+    for value in ["1", "1B", "1KiB", "2MiB", "1GiB"] {
+        assert!(
+            Cli::try_parse_from([
+                "app",
+                "-i",
+                "x",
+                "--storage",
+                "disk",
+                "--memory-limit",
+                value
+            ])
+            .is_ok()
+        );
+    }
+    for flags in [
+        vec!["--memory-limit", "1KiB"],
+        vec!["--temp-dir", "/unused"],
+        vec!["--inspect", "--storage", "disk"],
+    ] {
+        let cli = Cli::try_parse_from(["app", "-i", "unused"].into_iter().chain(flags)).unwrap();
+        assert!(cli.validate_mode().is_err());
+    }
+}
+
+#[test]
 fn conversion_transport_equivalence_and_hand_computed_outputs() {
     use vcf2phylip_rs::conversion::convert;
     let text = conversion_fixture();

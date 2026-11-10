@@ -4,6 +4,7 @@ use std::{collections::HashSet, path::PathBuf};
 use crate::{
     filter::ProcessingConfig,
     genotype::{PartialMissingPolicy, Resolution},
+    storage::StorageMode,
 };
 use clap::{ArgAction, Parser};
 use thiserror::Error;
@@ -12,7 +13,7 @@ use thiserror::Error;
 #[command(
     version,
     disable_version_flag = true,
-    about = "Convert VCF/BCF to in-memory FASTA and relaxed PHYLIP alignments"
+    about = "Convert VCF/BCF to FASTA and relaxed PHYLIP alignments"
 )]
 pub struct Cli {
     #[arg(short, long)]
@@ -20,6 +21,15 @@ pub struct Cli {
     /// Stream and validate input; print diagnostic counts only, never an alignment.
     #[arg(long)]
     pub inspect: bool,
+    /// Matrix backend; memory is unbounded, disk uses a bounded cell buffer.
+    #[arg(long, value_enum, default_value = "memory")]
+    pub storage: StorageMode,
+    /// Disk cell-buffer budget (default 64 MiB). Bytes, KiB, MiB, GiB supported.
+    #[arg(long, value_parser = parse_bytes)]
+    pub memory_limit: Option<usize>,
+    /// Existing directory for the disk matrix spool (default OS temporary dir).
+    #[arg(long)]
+    pub temp_dir: Option<PathBuf>,
     #[arg(short = 'm', long, default_value = "4", value_parser = positive_usize)]
     pub min_samples_locus: usize,
     /// Exact sample name; repeat for multiple outgroups (no delimiter splitting).
@@ -77,6 +87,8 @@ pub enum ConfigError {
     NoSamples,
     #[error("--resolve-IUPAC requires --seed; --seed requires --resolve-IUPAC")]
     InvalidSeed,
+    #[error("--memory-limit and --temp-dir require --storage disk")]
+    StorageOptions,
 }
 
 #[derive(Debug)]
@@ -94,13 +106,42 @@ fn positive_usize(value: &str) -> Result<usize, String> {
     }
 }
 
+fn parse_bytes(value: &str) -> Result<usize, String> {
+    let (digits, multiplier) = [
+        ("KiB", 1024usize),
+        ("MiB", 1024 * 1024),
+        ("GiB", 1024 * 1024 * 1024),
+        ("B", 1),
+    ]
+    .into_iter()
+    .find_map(|(suffix, n)| value.strip_suffix(suffix).map(|s| (s, n)))
+    .unwrap_or((value, 1));
+    digits
+        .parse::<usize>()
+        .ok()
+        .and_then(|n| n.checked_mul(multiplier))
+        .filter(|&n| n > 0)
+        .ok_or_else(|| {
+            "expected positive bytes or integer KiB/MiB/GiB (no spaces), within platform usize"
+                .into()
+        })
+}
+
 impl Cli {
     pub fn validate_mode(&self) -> Result<(), ConfigError> {
+        if self.storage == StorageMode::Memory
+            && (self.memory_limit.is_some() || self.temp_dir.is_some())
+        {
+            return Err(ConfigError::StorageOptions);
+        }
         if self.nexus || self.nexus_binary {
             return Err(ConfigError::NexusUnsupported);
         }
         if self.inspect
-            && (self.output_folder.is_some()
+            && (self.storage != StorageMode::Memory
+                || self.memory_limit.is_some()
+                || self.temp_dir.is_some()
+                || self.output_folder.is_some()
                 || self.output_prefix.is_some()
                 || self.phylip_disable
                 || self.fasta

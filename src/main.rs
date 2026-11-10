@@ -9,11 +9,12 @@ fn main() -> Result<()> {
     if !cli.inspect {
         let report = vcf2phylip_rs::conversion::convert(&cli)?;
         println!(
-            "Converted {} records; retained {} nucleotide loci; {} samples; matrix payload {} bytes (in-memory, excluding capacity/metadata).",
+            "Converted {} records; retained {} nucleotide loci; {} samples; matrix payload {} bytes ({:?}, not peak RSS).",
             report.stats.records,
             report.stats.nucleotide_accepted,
             report.samples,
-            report.matrix_bytes
+            report.matrix_bytes,
+            report.storage
         );
         for path in report.outputs {
             println!("Wrote {}", path.display());
