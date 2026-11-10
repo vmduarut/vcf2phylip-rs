@@ -1,0 +1,43 @@
+# TEMPLATE ONLY: replace every @...@ token before rendering or submission.
+# The source must contain Cargo.lock and a pre-generated vendor/ directory.
+{% set version = "0.1.0" %}
+
+package:
+  name: vcf2phylip-rs
+  version: {{ version }}
+
+source:
+  url: @PUBLIC_VENDORED_SOURCE_TARBALL_URL@
+  sha256: @VERIFIED_SOURCE_SHA256@
+
+build:
+  number: 0
+  skip: true  # [win]
+
+requirements:
+  build:
+    - {{ compiler('rust') }}
+    - {{ compiler('c') }}
+    - {{ stdlib('c') }}
+  # Confirm the selected Rust compiler is >=1.99 and available on each platform.
+  # Rust/C toolchains are build-only; inspect linkage for runtime requirements.
+
+test:
+  source_files:
+    - examples/example.vcf
+    - examples/expected.phy
+  commands:
+    - vcf2phylip-rs --version
+    - vcf2phylip-rs --help
+    - vcf2phylip-rs -i examples/example.vcf --output-folder smoke
+    - diff examples/expected.phy smoke/example.min4.phy
+
+about:
+  home: @PUBLIC_PROJECT_URL@
+  license: GPL-3.0-only
+  license_file: LICENSE
+  summary: VCF/BCF inspection and FASTA/relaxed PHYLIP conversion
+
+extra:
+  recipe-maintainers:
+    - @CONFIRMED_BIOCONDA_MAINTAINER@

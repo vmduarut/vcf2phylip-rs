@@ -5,6 +5,8 @@ edition = "2024"
 rust-version = "1.99"
 description = "VCF/BCF inspection and memory/disk FASTA/relaxed PHYLIP conversion"
 license = "GPL-3.0-only"
+readme = "README.md"
+include = ["Cargo.toml", "Cargo.lock", "LICENSE", "README.md", "src/**", "tests/**", "examples/**", "scripts/*.py", "docs/**", "packaging/**", "Dockerfile", ".dockerignore"]
 
 [dependencies]
 anyhow = "=1.0.104"

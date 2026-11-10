@@ -1,0 +1,80 @@
+name: Build release candidates (no publication)
+
+# Deliberately no tag/push/release trigger. This workflow cannot publish packages,
+# GitHub releases, or container images. Review/publication is a separate human task.
+on:
+  workflow_dispatch:
+    inputs:
+      acknowledge:
+        description: Build local-review candidates only; no publication authorized
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: ${{ inputs.acknowledge }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch
+        with:
+          toolchain: 1.99.0
+          components: rustfmt, clippy
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+      - run: python3 -m unittest discover -s scripts -p 'test_*.py'
+      - run: cargo package --locked
+      - run: cargo build --release --locked
+      - name: Bundle binary, source package, provenance and checksums
+        id: bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          version=$(cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+          name="vcf2phylip-rs-${version}-${host}"
+          mkdir -p "dist/$name"
+          cp target/release/vcf2phylip-rs LICENSE README.md "dist/$name/"
+          cp -R docs examples "dist/$name/"
+          cp "target/package/vcf2phylip-rs-${version}.crate" "dist/$name/"
+          {
+            printf 'commit=%s\nhost=%s\n' "$GITHUB_SHA" "$host"
+            rustc -vV
+            cargo --version
+          } > "dist/$name/BUILD.txt"
+          tar -czf "dist/$name.tar.gz" -C dist "$name"
+          python3 - "$name" <<'PY'
+          import hashlib, pathlib, sys
+          path = pathlib.Path('dist') / (sys.argv[1] + '.tar.gz')
+          digest = hashlib.sha256()
+          with path.open('rb') as source:
+              for chunk in iter(lambda: source.read(1024 * 1024), b''):
+                  digest.update(chunk)
+          path.with_suffix(path.suffix + '.sha256').write_text(
+              digest.hexdigest() + '  ' + path.name + '\n'
+          )
+          PY
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.bundle.outputs.name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14

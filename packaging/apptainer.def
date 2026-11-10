@@ -1,0 +1,33 @@
+Bootstrap: docker
+From: rust:1.99.0-bookworm@sha256:114c7a4425406451c2866b6aafe69fe29b1b298832db1277d411ac73c82d04d6
+Stage: build
+
+%files
+    Cargo.toml /build/Cargo.toml
+    Cargo.lock /build/Cargo.lock
+    README.md /build/README.md
+    LICENSE /build/LICENSE
+    src /build/src
+
+%post
+    cd /build
+    cargo build --release --locked
+
+Bootstrap: docker
+From: debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
+Stage: final
+
+%files from build
+    /build/target/release/vcf2phylip-rs /usr/local/bin/vcf2phylip-rs
+    /build/LICENSE /usr/share/licenses/vcf2phylip-rs/LICENSE
+
+%runscript
+    exec /usr/local/bin/vcf2phylip-rs "$@"
+
+%test
+    /usr/local/bin/vcf2phylip-rs --version
+    /usr/local/bin/vcf2phylip-rs --help
+
+%labels
+    License GPL-3.0-only
+    Description VCF/BCF to FASTA and relaxed PHYLIP; M6 unvalidated container recipe

@@ -1,10 +1,16 @@
-# vcf2phylip-rs — Milestone 5
+# vcf2phylip-rs — Milestone 6
 
 An independently designed Rust library and thin CLI for **streaming VCF/BCF
 inspection and scientific genotype processing**, plus **FASTA and
 relaxed PHYLIP conversion**, with optional bounded-cell-buffer disk storage.
 Milestone 4 was explicitly skipped: **both DNA NEXUS and SNAPP remain deferred**.
 This is not a claim of exact upstream output compatibility.
+
+**Distribution preparation, not a published release:** build/install from the
+local source today. See [installation and examples](docs/install.md),
+[container/BioConda recipes](docs/packaging.md), and the
+[toolchain policy and release checklist](docs/releases.md). No registry package,
+container image, or downloadable release is claimed to exist.
 
 ## Build and inspect
 
@@ -243,14 +249,19 @@ scheme, not upstream Python RNG equivalence.
 - M4 skipped/deferred: both nucleotide NEXUS and binary NEXUS/SNAPP writers.
 - M5 complete: bounded-cell-buffer tiled disk storage and reproducible opt-in
   benchmark harness (no performance superiority claim).
+- M6: Linux/macOS CI, manually gated artifact-only release builds, tested local
+  Cargo packaging and examples, and unvalidated container/BioConda templates.
+  Remote CI/platform execution and actual publication remain external checks.
 
 ## Development checks
 
 ```sh
-cargo check
+cargo check --locked
 cargo fmt --all -- --check
 cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
+python3 -m unittest discover -s scripts -p 'test_*.py'
+cargo package --locked # add --allow-dirty only for local packaging review
 ```
 
 Tests synthesize their own VCF, gzip, BGZF and BCF data. There are no upstream
