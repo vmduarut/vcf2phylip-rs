@@ -1,6 +1,10 @@
 //! Compatibility argument names; output-producing options are reserved, not implemented.
 use std::{collections::HashSet, path::PathBuf};
 
+use crate::{
+    filter::ProcessingConfig,
+    genotype::{PartialMissingPolicy, Resolution},
+};
 use clap::{ArgAction, Parser};
 use thiserror::Error;
 
@@ -8,7 +12,7 @@ use thiserror::Error;
 #[command(
     version,
     disable_version_flag = true,
-    about = "VCF/BCF validation and inspection (Milestone 1; no alignment conversion)"
+    about = "VCF/BCF validation and scientific inspection (Milestone 2; no alignment conversion)"
 )]
 pub struct Cli {
     #[arg(short, long)]
@@ -39,9 +43,15 @@ pub struct Cli {
     /// Reserved conversion option.
     #[arg(short = 'b', long)]
     pub nexus_binary: bool,
-    /// Reserved conversion option.
+    /// Resolve nucleotide calls by sampling allele copies; requires --seed.
     #[arg(short = 'r', long = "resolve-IUPAC")]
     pub resolve_iupac: bool,
+    /// Explicit reproducible seed for --resolve-IUPAC.
+    #[arg(long)]
+    pub seed: Option<u64>,
+    /// Treatment of partially missing nucleotide genotypes (binary is always strict).
+    #[arg(long, value_enum, default_value = "missing")]
+    pub partial_missing: PartialMissingPolicy,
     /// Reserved conversion option.
     #[arg(short = 'w', long)]
     pub write_used_sites: bool,
@@ -63,6 +73,8 @@ pub enum ConfigError {
     DuplicateOutgroup(String),
     #[error("input has no samples")]
     NoSamples,
+    #[error("--resolve-IUPAC requires --seed; --seed requires --resolve-IUPAC")]
+    InvalidSeed,
 }
 
 #[derive(Debug)]
@@ -70,6 +82,7 @@ pub struct ValidatedConfig {
     pub minimum_samples: usize,
     pub outgroup_indices: Vec<usize>,
     pub warnings: Vec<String>,
+    pub processing: ProcessingConfig,
 }
 
 fn positive_usize(value: &str) -> Result<usize, String> {
@@ -90,13 +103,15 @@ impl Cli {
             || self.fasta
             || self.nexus
             || self.nexus_binary
-            || self.resolve_iupac
             || self.write_used_sites
         {
             return Err(ConfigError::OutputUnsupported);
         }
         if self.min_samples_locus == 0 {
             return Err(ConfigError::InvalidMinimum);
+        }
+        if self.resolve_iupac != self.seed.is_some() {
+            return Err(ConfigError::InvalidSeed);
         }
         Ok(())
     }
@@ -122,7 +137,7 @@ impl Cli {
         let minimum_samples = self.min_samples_locus.min(samples.len());
         let warnings = if minimum_samples != self.min_samples_locus {
             vec![format!(
-                "minimum samples capped from {} to {minimum_samples} (input sample count); inspection does not filter loci",
+                "minimum samples capped from {} to {minimum_samples} (input sample count)",
                 self.min_samples_locus
             )]
         } else {
@@ -132,6 +147,14 @@ impl Cli {
             minimum_samples,
             outgroup_indices,
             warnings,
+            processing: ProcessingConfig::new(
+                samples.len(),
+                Some(minimum_samples),
+                self.partial_missing,
+                self.seed
+                    .map_or(Resolution::Iupac, |seed| Resolution::Random { seed }),
+            )
+            .map_err(|_| ConfigError::InvalidMinimum)?,
         })
     }
 }

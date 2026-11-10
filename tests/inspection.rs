@@ -321,6 +321,19 @@ fn actual_cli_never_fakes_conversion_or_creates_output() {
     assert!(String::from_utf8(output.stderr).unwrap().contains("capped"));
     assert!(!run(&[]).status.success());
     assert!(!run(&["--inspect", "--fasta"]).status.success());
+    let seeded = run(&[
+        "--inspect",
+        "-r",
+        "--seed",
+        "42",
+        "--partial-missing",
+        "called-alleles",
+    ]);
+    assert!(seeded.status.success());
+    let text = String::from_utf8(seeded.stdout).unwrap();
+    assert!(text.contains("Accepted nucleotide loci: 1; accepted binary loci: 1"));
+    assert!(text.contains("random seed: Some(42)"));
+    assert!(!run(&["--inspect", "--seed", "42"]).status.success());
     assert!(
         !run(&["--inspect", "--output-folder", "must-not-exist"])
             .status
@@ -337,5 +350,74 @@ fn actual_cli_never_fakes_conversion_or_creates_output() {
                 .status
                 .success()
         );
+    }
+}
+
+#[test]
+fn reader_to_processing_transport_equivalence_and_original_record_order() {
+    use vcf2phylip_rs::{
+        filter::{ProcessingConfig, Stats},
+        genotype::{PartialMissingPolicy, Resolution},
+    };
+    let text = data("S\tT", "chr1\t9\t.\tA\tC\t.\tPASS\t.\tGT\t0/1\t1/1\nchr2\t2\t.\tA\tAT\t.\tPASS\t.\tGT\t0/0\t0/1\nchr1\t1\t.\tA\tC,G,T\t.\tPASS\t.\tGT\t0/1/2/3\t0/.\nchr2\t1\t.\tG\tT\t.\tPASS\t.\tDP\t4\t2\n")
+        .replace("##contig=<ID=chr1,length=1000>\n", "##contig=<ID=chr1,length=1000>\n##contig=<ID=chr2,length=1000>\n");
+    let cfg = ProcessingConfig::new(
+        2,
+        Some(1),
+        PartialMissingPolicy::CalledAlleles,
+        Resolution::Random { seed: 9 },
+    )
+    .unwrap();
+    let mut baseline = None;
+    for bytes in [
+        text.as_bytes().to_vec(),
+        gzip(text.as_bytes()),
+        bgzf(text.as_bytes()),
+        bcf_bytes(&text),
+    ] {
+        let mut input = VariantReader::from_reader(Cursor::new(bytes)).unwrap();
+        let mut results = Vec::new();
+        let mut locations = Vec::new();
+        let mut stats = Stats::default();
+        while let Some(v) = input.next_variant().unwrap() {
+            locations.push((
+                v.record.reference_sequence_name().to_string(),
+                usize::from(v.record.variant_start().unwrap()),
+            ));
+            let locus = cfg.process(&v, input.records_read() - 1).unwrap();
+            stats.observe(&locus);
+            results.push(locus);
+        }
+        assert_eq!(
+            locations,
+            [
+                ("chr1".into(), 9),
+                ("chr2".into(), 2),
+                ("chr1".into(), 1),
+                ("chr2".into(), 1)
+            ]
+        );
+        assert_eq!(stats.records, 4);
+        assert_eq!(stats.rejected_non_snp, 1);
+        assert_eq!(stats.nucleotide_accepted, 2);
+        assert_eq!(stats.binary_eligible, 2);
+        assert_eq!(stats.binary_accepted, 1);
+        if let Some(expected) = &baseline {
+            assert_eq!(&results, expected);
+        } else {
+            baseline = Some(results);
+        }
+    }
+}
+
+#[test]
+fn multidigit_out_of_range_is_error_in_vcf_and_bcf() {
+    let text = data(
+        "S",
+        "chr1\t1\t.\tA\tC,G,T,C,G,T,C,G,T,<NON_REF>\t.\tPASS\t.\tGT\t11/0\n",
+    );
+    for bytes in [text.as_bytes().to_vec(), bcf_bytes(&text)] {
+        let mut input = VariantReader::from_reader(Cursor::new(bytes)).unwrap();
+        assert!(input.next_variant().is_err());
     }
 }

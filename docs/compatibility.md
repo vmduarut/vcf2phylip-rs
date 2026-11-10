@@ -17,17 +17,19 @@ legal advice or a declaration of permission to relicense upstream material.
 
 ## Argument vocabulary retained
 
-| Argument | Milestone 1 status |
+| Argument | Milestone 2 status |
 | --- | --- |
 | `-i`, `--input` | Required input path |
-| `-m`, `--min-samples-locus` | Positive integer, default 4, capped with warning; not applied |
+| `-m`, `--min-samples-locus` | Positive integer, default 4, capped with warning; independently applied to DNA/binary |
 | `-o`, `--outgroup` | Exact validated name, repeatable; not reordered yet |
 | `--output-folder`, `--output-prefix` | Reserved, explicitly unsupported |
 | `-p`, `--phylip-disable` | Reserved, explicitly unsupported |
 | `-f`, `--fasta` | Reserved, explicitly unsupported |
 | `-n`, `--nexus` | Reserved, explicitly unsupported |
 | `-b`, `--nexus-binary` | Reserved, explicitly unsupported |
-| `-r`, `--resolve-IUPAC` | Reserved, explicitly unsupported |
+| `-r`, `--resolve-IUPAC` | Seeded allele-copy resolution; explicit `--seed` required |
+| `--seed` | u64, permitted only with `-r` |
+| `--partial-missing` | `missing` (default) or `called-alleles`, nucleotide calls only |
 | `-w`, `--write-used-sites` | Reserved, explicitly unsupported |
 | `-v`, `--version` | This Rust package's version, not upstream's version |
 | `--inspect` | New, mandatory for functional diagnostic path |
@@ -51,21 +53,16 @@ The baseline has behavior that a future scientific converter must not inherit:
    counts and the used-site list.
 
 Milestone 1 parses genotype indices numerically and preserves missingness and
-symbolic alleles. It has **no filtering, alignment or used-site counter** and
-does not claim to have implemented or validated fixes to conversion outputs.
+symbolic alleles. Milestone 2 interprets canonical SNP genotypes independently,
+with symmetric partial missingness and independent DNA/binary thresholds.
+There is still **no alignment or used-site output** and no claim to have
+validated conversion-output equivalence. See the [scientific contract](../README.md#scientific-contract).
 
 ## Planned, not shipped
 
-Later milestones may add genotype interpretation, IUPAC conversion, filtering,
-sample ordering, matrix storage/transposition, PHYLIP/FASTA/NEXUS writers and
-scientific statistics. Only `cli` and `reader` are implemented now; there is no
-empty scaffolding pretending the other components exist.
-
-The intended conservative SNP policy is canonical single-base A/C/G/T alleles,
-with explicit handling/rejection of symbolic alleles, indels, spanning deletions
-and ambiguous reference bases rather than silently coercing them. Partial
-missingness must be order-independent: `0/.` and `./0` have identical filtering
-status, with a documented policy separating unknown calls from fully called
-ones. The exact filtering/conversion contract, binary eligibility, used-site
-accounting and deterministic ambiguity handling still need implementation and
-scientific tests. None of those future rules is applied by `--inspect`.
+Later milestones may add sample ordering, matrix storage/transposition,
+PHYLIP/FASTA/NEXUS writers and used-site files. `cli`, `reader`, `genotype`,
+`iupac` and `filter` are implemented now. Scientific inspection applies the
+documented conservative SNP and genotype policies without writing alignments.
+The independently designed implementation and synthetic tests do not copy
+upstream Python algorithms or sequence fixtures.
