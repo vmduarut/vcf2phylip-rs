@@ -17,22 +17,22 @@ legal advice or a declaration of permission to relicense upstream material.
 
 ## Argument vocabulary retained
 
-| Argument | Milestone 2 status |
+| Argument | Milestone 3 status |
 | --- | --- |
 | `-i`, `--input` | Required input path |
 | `-m`, `--min-samples-locus` | Positive integer, default 4, capped with warning; independently applied to DNA/binary |
-| `-o`, `--outgroup` | Exact validated name, repeatable; not reordered yet |
-| `--output-folder`, `--output-prefix` | Reserved, explicitly unsupported |
-| `-p`, `--phylip-disable` | Reserved, explicitly unsupported |
-| `-f`, `--fasta` | Reserved, explicitly unsupported |
+| `-o`, `--outgroup` | Exact validated name, repeatable; stable outgroup-first output order |
+| `--output-folder`, `--output-prefix` | Output directory and safe basename; defaults cwd and input basename |
+| `-p`, `--phylip-disable` | Disable default relaxed PHYLIP; requires FASTA |
+| `-f`, `--fasta` | Add FASTA output |
 | `-n`, `--nexus` | Reserved, explicitly unsupported |
 | `-b`, `--nexus-binary` | Reserved, explicitly unsupported |
 | `-r`, `--resolve-IUPAC` | Seeded allele-copy resolution; explicit `--seed` required |
 | `--seed` | u64, permitted only with `-r` |
 | `--partial-missing` | `missing` (default) or `called-alleles`, nucleotide calls only |
-| `-w`, `--write-used-sites` | Reserved, explicitly unsupported |
+| `-w`, `--write-used-sites` | Retained nucleotide coordinates and called-sample count |
 | `-v`, `--version` | This Rust package's version, not upstream's version |
-| `--inspect` | New, mandatory for functional diagnostic path |
+| `--inspect` | Diagnostics only; incompatible with output flags |
 
 Names, errors, output text, compression detection and multiple outgroups
 intentionally differ from upstream. In particular, input sample names are not
@@ -55,14 +55,15 @@ The baseline has behavior that a future scientific converter must not inherit:
 Milestone 1 parses genotype indices numerically and preserves missingness and
 symbolic alleles. Milestone 2 interprets canonical SNP genotypes independently,
 with symmetric partial missingness and independent DNA/binary thresholds.
-There is still **no alignment or used-site output** and no claim to have
-validated conversion-output equivalence. See the [scientific contract](../README.md#scientific-contract).
+Milestone 3 emits nucleotide FASTA/relaxed PHYLIP and used-site output with
+hand-computed synthetic tests, not upstream output-equivalence claims. See the
+[scientific contract](../README.md#scientific-contract) and
+[output safety contract](../README.md#conversion-and-output-safety).
 
 ## Planned, not shipped
 
-Later milestones may add sample ordering, matrix storage/transposition,
-PHYLIP/FASTA/NEXUS writers and used-site files. `cli`, `reader`, `genotype`,
-`iupac` and `filter` are implemented now. Scientific inspection applies the
-documented conservative SNP and genotype policies without writing alignments.
+M4 will add nucleotide NEXUS/binary NEXUS/SNAPP; M5 will add bounded disk-backed
+matrix storage. M3 currently uses unbounded RAM for one sequence per sample.
+Scientific inspection remains a separate no-write mode.
 The independently designed implementation and synthetic tests do not copy
 upstream Python algorithms or sequence fixtures.

@@ -6,6 +6,20 @@ use vcf2phylip_rs::{cli::Cli, reader::VariantReader};
 fn main() -> Result<()> {
     let cli = Cli::parse();
     cli.validate_mode()?;
+    if !cli.inspect {
+        let report = vcf2phylip_rs::conversion::convert(&cli)?;
+        println!(
+            "Converted {} records; retained {} nucleotide loci; {} samples; matrix payload {} bytes (in-memory, excluding capacity/metadata).",
+            report.stats.records,
+            report.stats.nucleotide_accepted,
+            report.samples,
+            report.matrix_bytes
+        );
+        for path in report.outputs {
+            println!("Wrote {}", path.display());
+        }
+        return Ok(());
+    }
     let mut reader = VariantReader::open(&cli.input)?;
     let samples: Vec<_> = reader.header().sample_names().iter().cloned().collect();
     let config = cli.validate_samples(&samples)?;

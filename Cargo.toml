@@ -3,7 +3,7 @@ name = "vcf2phylip-rs"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.99"
-description = "Streaming VCF/BCF inspection foundation for a future phylogenetic alignment converter"
+description = "VCF/BCF inspection and in-memory FASTA/relaxed PHYLIP conversion"
 license = "GPL-3.0-only"
 
 [dependencies]
@@ -13,6 +13,4 @@ flate2 = "=1.1.11"
 noodles = { version = "=0.119.0", features = ["vcf", "bcf", "bgzf"] }
 rand_chacha = "=0.10.0"
 thiserror = "=2.0.21"
-
-[dev-dependencies]
 tempfile = "=3.27.0"

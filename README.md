@@ -1,8 +1,9 @@
-# vcf2phylip-rs — Milestone 2
+# vcf2phylip-rs — Milestone 3
 
 An independently designed Rust library and thin CLI for **streaming VCF/BCF
-inspection and scientific genotype processing**. Alignment conversion is **not implemented**. This is not yet a
-replacement for vcf2phylip, nor a claim of scientific-output compatibility.
+inspection and scientific genotype processing**, plus **in-memory FASTA and
+relaxed PHYLIP conversion**. NEXUS/SNAPP and bounded-memory storage are not yet
+implemented. This is not a claim of exact upstream output compatibility.
 
 ## Build and inspect
 
@@ -11,6 +12,9 @@ cargo build --locked
 cargo run --locked -- --input variants.vcf.gz --inspect
 cargo run --locked -- -i variants.bcf --inspect -m 4 -o 'exact sample name'
 cargo run --locked -- -i variants.vcf --inspect --partial-missing called-alleles -r --seed 42
+cargo run --locked -- -i variants.vcf.gz --output-folder alignments
+cargo run --locked -- -i variants.bcf -f -w -o outgroup --output-prefix study
+cargo run --locked -- -i variants.vcf -p -f -r --seed 42
 cargo run --locked -- --help
 ```
 
@@ -18,21 +22,23 @@ Tested with Rust/Cargo **1.99.0** on Linux; `rust-version = "1.99"` is the
 conservative tested minimum, not a claim that earlier toolchains cannot work.
 Direct dependencies are exactly pinned and `Cargo.lock` is included. All
 requested versions resolved: noodles 0.119.0, clap 4.6.7, thiserror 2.0.21,
-anyhow 1.0.104, flate2 1.1.11, and dev dependency tempfile 3.27.0. No native
+anyhow 1.0.104, flate2 1.1.11, and tempfile 3.27.0. No native
 libraries or toolchain installation is needed. Seeded resolution uses exactly
 pinned rand_chacha 0.10.0 (rand_core 0.10.1 in the lockfile), without the rand
 convenience API. There is no application parallelism; noodles brings rayon
-transitively, and tempfile brings its own test-only randomness dependencies.
+transitively, and tempfile brings randomness dependencies for staging filenames.
 
 ## Shipped behavior
 
 - Content-based detection (extensions are ignored): plain VCF, gzip VCF,
   concatenated/multimember gzip VCF, BGZF VCF, raw or gzip/BGZF BCF 2.2.
-- Reads one record at a time with noodles adapters; memory scales with header
-  and current record, not the number of loci. No random access/index required.
+- Reads one record at a time with noodles adapters. Inspection memory scales
+  with header and current record; conversion additionally retains the entire
+  nucleotide matrix in RAM (see resource limits below). No index required.
 - Requires a valid header, at least one sample, and `FORMAT/GT` declared as
   `Number=1,Type=String`. Empty/duplicate sample names are errors. Names remain
-  unchanged, including `./`, punctuation and spaces.
+  unchanged, including `./`, punctuation and spaces in inspection. Conversion
+  rejects whitespace/control-containing names rather than silently changing them.
 - Header-only input is valid inspection input. FORMAT can omit GT at a locus;
   this is carried as absent GT rather than assumed reference. A missing VCF
   GT value `.` has unknown ploidy; explicit `./.` retains two missing alleles.
@@ -53,9 +59,62 @@ transitively, and tempfile brings its own test-only randomness dependencies.
   requested order. Unknown or duplicate requests are errors. No comma/semicolon
   splitting, renaming, or actual sample reordering occurs during inspection.
 - Inspection prints diagnostic counts, never creates output directories,
-  matrices or used-site files. Without `--inspect`, conversion fails clearly.
-  Reserved output flags also fail with `--inspect`, so they cannot silently be
+  matrices or used-site files. Output flags fail with `--inspect`, so they cannot silently be
   ignored. `--help`, `--version` and upstream-style `-v` work without input.
+
+## Conversion and output safety
+
+Without `--inspect`, relaxed sequential PHYLIP is the default. `-f` adds FASTA;
+`-p -f` selects FASTA only. `-p` alone is an error. `-n` and `-b` fail before
+output effects (NEXUS/SNAPP are M4). Both writers use the same nucleotide matrix.
+PHYLIP starts with `S L`, then full names separated from unwrapped sequences by
+two spaces. FASTA wraps sequence lines at 80 bases. Identifiers retain their
+exact UTF-8 bytes: no truncation, cleaning, escaping or remapping. Empty/duplicate
+identifiers and any Unicode whitespace/control characters are rejected for both
+formats, preventing ambiguous FASTA first-token identifiers and PHYLIP labels.
+Non-whitespace punctuation and long names are preserved. Some downstream tools
+may impose stricter ASCII or identifier conventions than these relaxed formats.
+
+Repeated `-o` names come first in requested order, followed by all other samples
+in original header order; this is only an ordering convention, not tree rooting.
+Random calls are computed with original record/sample indices before ordering.
+`-w` writes nucleotide-retained sites only, in input order including repeated
+coordinates: tab-separated `#CHROM POS NUM_SAMPLES`, with original 1-based POS
+and the called-sample count under the selected partial policy.
+
+Outputs default to the current directory, or `--output-folder` (created if
+missing). Names are `<prefix>.min<N>.phy`, `.fasta`, `.used_sites.tsv`, with
+effective capped minimum N. The default prefix is the input basename with a
+terminal `.vcf`/`.bcf` and optional `.gz`/`.bgz`/`.bgzf` removed case-insensitively;
+arbitrary middle `.vcf` substrings remain. Explicit prefixes must be nonempty
+basenames, not `.`/`..`, absolute paths or slash/backslash-containing paths.
+
+All selected targets are preflighted before records are processed. Existing
+files, directories, hardlinks and even dangling symlinks are refused. There is
+deliberately no overwrite/`--force` option, including for aliases of the input.
+Validated flags, sample labels and outgroups precede output directory creation.
+Files are staged with `NamedTempFile` in the target directory; all input must
+validate through EOF and every writer must flush successfully before publication.
+Header-only or zero-retained-locus conversion is an actionable error with no
+final alignment or site files. Ordinary errors clean temporary staging files;
+an empty newly created output directory may remain.
+
+Final publication uses `persist_noclobber`: atomic **per file**, not a transaction
+across all selected files. A filesystem failure or racing creator during
+publication can leave earlier outputs finalized; diagnostics state this, and no
+rollback deletes potentially replaced files. No durability across power loss,
+cleanup after SIGKILL, or protection from a hostile directory owner is promised.
+
+### Resource limits (M3)
+
+Conversion stores one growable `Vec<u8>` per sample, no second transposed matrix
+or binary matrix. Payload is S × L bytes, with checked dimensions; allocator
+capacity, sample names, header/current record, metadata and I/O buffers add RAM.
+For example 1,000 samples × 1,000,000 retained loci need at least 1 GB just for
+sequence payload. Success reports payload bytes, **not peak RAM**. Memory is
+unbounded in the number of loci; allocation failures are reported where possible,
+but process/OS OOM termination is possible. Use datasets that fit available RAM.
+Bounded disk-backed storage is M5, not a feature of this milestone.
 
 This is structural/genotype validation, not a complete VCF specification
 validator or scientific quality-control tool. It does not impose sorted loci,
@@ -81,6 +140,11 @@ independent called counts and acceptance booleans. It never accumulates a matrix
 remain separate. `genotype` exposes call types/policies and single-call functions;
 `iupac::BaseMask` distinguishes known four-base ambiguity from missing data.
 `cli::Cli` validates mode, sample names and seed pairing.
+`conversion::convert(&Cli)` runs the staged no-clobber conversion and returns
+statistics/output paths; `conversion::collect` builds a `matrix::Matrix` from a
+reader and processing config, optionally streaming a site report to `Write`.
+`writers::{fasta,phylip}::write` accept generic `Write`, a matrix and a sample
+index permutation, and propagate buffered write/flush failures.
 
 ## Scientific contract
 
@@ -104,7 +168,7 @@ remain separate. `genotype` exposes call types/policies and single-call function
   diploid/unknown-ploidy calls from unsupported known ploidies (ploidy takes
   precedence, including all-missing non-diploids). Only encodable calls count
   toward the binary threshold. Nucleotide policies never alter binary calls.
-- Both eligibility/threshold paths always run, independent of future output
+- Both eligibility/threshold paths always run, independent of output
   selections. Multiallelic SNPs can pass DNA but never binary. Inspection prints
   accepted locus counts, not alignment files. Missing-call counters include
   eligible sites even if their threshold fails, never biologically rejected sites.
@@ -134,8 +198,10 @@ scheme, not upstream Python RNG equivalence.
 - M1 complete: streaming readers and strict structural/genotype validation.
 - M2 complete: genotype/IUPAC policies, independent filters, keyed seeded
   resolution and scientific inspection counters.
-- M3/M4 future: sample ordering, matrix storage/transposition and alignment/site
-  writers. No matrix, PHYLIP/FASTA/NEXUS output or used-site files exist yet.
+- M3 complete: in-memory nucleotide matrix, stable sample ordering, FASTA/relaxed
+  PHYLIP, retained-site reporting and staged no-clobber output safety.
+- M4 pending: nucleotide NEXUS and binary NEXUS/SNAPP writers.
+- M5 pending: bounded-memory disk-backed matrix storage.
 
 ## Development checks
 

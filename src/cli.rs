@@ -1,4 +1,4 @@
-//! Compatibility argument names; output-producing options are reserved, not implemented.
+//! Compatibility arguments and validation for inspection and conversion.
 use std::{collections::HashSet, path::PathBuf};
 
 use crate::{
@@ -12,7 +12,7 @@ use thiserror::Error;
 #[command(
     version,
     disable_version_flag = true,
-    about = "VCF/BCF validation and scientific inspection (Milestone 2; no alignment conversion)"
+    about = "Convert VCF/BCF to in-memory FASTA and relaxed PHYLIP alignments"
 )]
 pub struct Cli {
     #[arg(short, long)]
@@ -25,22 +25,22 @@ pub struct Cli {
     /// Exact sample name; repeat for multiple outgroups (no delimiter splitting).
     #[arg(short, long)]
     pub outgroup: Vec<String>,
-    /// Reserved conversion option (not supported in inspection mode).
+    /// Output directory (defaults to the current directory).
     #[arg(long)]
     pub output_folder: Option<PathBuf>,
-    /// Reserved conversion option.
+    /// Output basename (defaults to input basename without known format suffixes).
     #[arg(long)]
     pub output_prefix: Option<String>,
-    /// Reserved conversion option.
+    /// Disable the default relaxed PHYLIP output.
     #[arg(short = 'p', long)]
     pub phylip_disable: bool,
-    /// Reserved conversion option.
+    /// Also write FASTA (80 columns per sequence line).
     #[arg(short = 'f', long)]
     pub fasta: bool,
-    /// Reserved conversion option.
+    /// Reserved for Milestone 4 (not yet supported).
     #[arg(short = 'n', long)]
     pub nexus: bool,
-    /// Reserved conversion option.
+    /// Reserved for Milestone 4 (not yet supported).
     #[arg(short = 'b', long)]
     pub nexus_binary: bool,
     /// Resolve nucleotide calls by sampling allele copies; requires --seed.
@@ -52,7 +52,7 @@ pub struct Cli {
     /// Treatment of partially missing nucleotide genotypes (binary is always strict).
     #[arg(long, value_enum, default_value = "missing")]
     pub partial_missing: PartialMissingPolicy,
-    /// Reserved conversion option.
+    /// Write retained nucleotide site coordinates and called sample counts.
     #[arg(short = 'w', long)]
     pub write_used_sites: bool,
     #[arg(short = 'v', long, action = ArgAction::Version)]
@@ -61,9 +61,11 @@ pub struct Cli {
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
-    #[error("alignment conversion is not implemented; use --inspect for validation only")]
-    ConversionUnsupported,
-    #[error("conversion/output flags cannot be used with --inspect; no outputs are implemented")]
+    #[error("NEXUS and binary NEXUS output are not implemented (Milestone 4)")]
+    NexusUnsupported,
+    #[error("no alignment output selected; use --fasta with --phylip-disable")]
+    NoOutputs,
+    #[error("conversion/output flags cannot be used with --inspect")]
     OutputUnsupported,
     #[error("minimum samples must be positive")]
     InvalidMinimum,
@@ -94,18 +96,22 @@ fn positive_usize(value: &str) -> Result<usize, String> {
 
 impl Cli {
     pub fn validate_mode(&self) -> Result<(), ConfigError> {
-        if !self.inspect {
-            return Err(ConfigError::ConversionUnsupported);
+        if self.nexus || self.nexus_binary {
+            return Err(ConfigError::NexusUnsupported);
         }
-        if self.output_folder.is_some()
-            || self.output_prefix.is_some()
-            || self.phylip_disable
-            || self.fasta
-            || self.nexus
-            || self.nexus_binary
-            || self.write_used_sites
+        if self.inspect
+            && (self.output_folder.is_some()
+                || self.output_prefix.is_some()
+                || self.phylip_disable
+                || self.fasta
+                || self.nexus
+                || self.nexus_binary
+                || self.write_used_sites)
         {
             return Err(ConfigError::OutputUnsupported);
+        }
+        if !self.inspect && self.phylip_disable && !self.fasta {
+            return Err(ConfigError::NoOutputs);
         }
         if self.min_samples_locus == 0 {
             return Err(ConfigError::InvalidMinimum);

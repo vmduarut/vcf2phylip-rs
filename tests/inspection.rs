@@ -55,6 +55,174 @@ fn bcf_bytes(text: &str) -> Vec<u8> {
     writer.into_inner().finish().unwrap()
 }
 
+/// Independently encoded BCF 2.2, not produced by noodles' BCF writer.
+/// Layout follows VCFv4.3.pdf, section "BCF version 2.2": little-endian
+/// shared/individual lengths, fixed shared fields, typed strings, then FORMAT
+/// key/type and sample-major GT vectors. Int8 vector-end is 0x81 (not missing
+/// allele 0); GT alleles are (VCF_index + 1) << 1 with phase bit zero here.
+/// Each sample occupies exactly three bytes; padding follows the ENTIRE GT,
+/// never individual alleles. Explicit IDX entries fix PASS=0, GT=1, chr1=0.
+fn independent_mixed_ploidy_bcf() -> Vec<u8> {
+    let header = "##fileformat=VCFv4.3\n##FILTER=<ID=PASS,Description=\"All filters passed\",IDX=0>\n##contig=<ID=chr1,length=1000,IDX=0>\n##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\",IDX=1>\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tH\tD\tP\tM\n\0";
+    let mut bcf = b"BCF\x02\x02".to_vec();
+    bcf.extend(u32::try_from(header.len()).unwrap().to_le_bytes());
+    bcf.extend(header.as_bytes());
+    for (pos, genotypes) in [
+        // H=1, D=0/1, P=0/1/1, M=./0.
+        (
+            8_i32,
+            [[4, 0x81, 0x81], [2, 4, 0x81], [2, 4, 4], [0, 2, 0x81]],
+        ),
+        // H=0, D=./., P=0/./1, M=1/1.
+        (
+            1_i32,
+            [[2, 0x81, 0x81], [0, 0, 0x81], [2, 0, 4], [4, 4, 0x81]],
+        ),
+    ] {
+        let mut shared = Vec::new();
+        shared.extend(0_i32.to_le_bytes()); // CHROM dictionary index
+        shared.extend(pos.to_le_bytes()); // zero-based POS
+        shared.extend(1_i32.to_le_bytes()); // REF length
+        shared.extend(0x7f80_0001_u32.to_le_bytes()); // missing QUAL
+        shared.extend(0_u16.to_le_bytes()); // n_info
+        shared.extend(2_u16.to_le_bytes()); // n_allele
+        shared.extend(((1_u32 << 24) | 4).to_le_bytes()); // n_fmt=1, n_sample=4
+        shared.extend([0x07, 0x17, b'A', 0x17, b'C', 0x11, 0]); // empty ID, REF, ALT, PASS
+        let mut individual = vec![0x11, 1, 0x31]; // typed GT key=1; three int8 values/sample
+        individual.extend(genotypes.into_iter().flatten());
+        bcf.extend(u32::try_from(shared.len()).unwrap().to_le_bytes());
+        bcf.extend(u32::try_from(individual.len()).unwrap().to_le_bytes());
+        bcf.extend(shared);
+        bcf.extend(individual);
+    }
+    bcf
+}
+
+#[test]
+fn independent_bcf_mixed_ploidy_parsing_counts_and_conversion() {
+    use vcf2phylip_rs::{
+        conversion::collect,
+        filter::ProcessingConfig,
+        genotype::{PartialMissingPolicy, Resolution},
+        writers,
+    };
+    let vcf = data(
+        "H\tD\tP\tM",
+        "chr1\t9\t.\tA\tC\t.\tPASS\t.\tGT\t1\t0/1\t0/1/1\t./0\nchr1\t2\t.\tA\tC\t.\tPASS\t.\tGT\t0\t./.\t0/./1\t1/1\n",
+    );
+    let raw = independent_mixed_ploidy_bcf();
+    let expected = [
+        vec![
+            vec![Some(1)],
+            vec![Some(0), Some(1)],
+            vec![Some(0), Some(1), Some(1)],
+            vec![None, Some(0)],
+        ],
+        vec![
+            vec![Some(0)],
+            vec![None, None],
+            vec![Some(0), None, Some(1)],
+            vec![Some(1), Some(1)],
+        ],
+    ];
+    // Assert actual ploidy and missing-allele positions, not merely symbols:
+    // vector-end padding must not become missing calls or truncate other samples.
+    for bytes in [vcf.as_bytes().to_vec(), raw.clone(), bgzf(&raw), gzip(&raw)] {
+        let mut input = VariantReader::from_reader(Cursor::new(bytes)).unwrap();
+        for (ordinal, expected) in expected.iter().enumerate() {
+            let variant = input.next_variant().unwrap().unwrap();
+            assert_eq!(
+                usize::from(variant.record.variant_start().unwrap()),
+                [9, 2][ordinal]
+            );
+            let actual: Vec<Vec<_>> = variant
+                .genotypes
+                .iter()
+                .map(|gt| {
+                    gt.as_ref()
+                        .unwrap()
+                        .as_ref()
+                        .iter()
+                        .map(|a| a.position())
+                        .collect()
+                })
+                .collect();
+            assert_eq!(&actual, expected);
+        }
+        assert!(input.next_variant().unwrap().is_none());
+    }
+    for (policy, called, missing, sequences) in [
+        (
+            PartialMissingPolicy::Missing,
+            [3, 2],
+            3,
+            ["CA", "MN", "MN", "NC"],
+        ),
+        (
+            PartialMissingPolicy::CalledAlleles,
+            [4, 3],
+            1,
+            ["CA", "MN", "MM", "AC"],
+        ),
+    ] {
+        let config = ProcessingConfig::new(4, Some(2), policy, Resolution::Iupac).unwrap();
+        let expected_phy = format!(
+            "4 2\nH  {}\nD  {}\nP  {}\nM  {}\n",
+            sequences[0], sequences[1], sequences[2], sequences[3]
+        );
+        let expected_fasta = format!(
+            ">H\n{}\n>D\n{}\n>P\n{}\n>M\n{}\n",
+            sequences[0], sequences[1], sequences[2], sequences[3]
+        );
+        for bytes in [vcf.as_bytes().to_vec(), raw.clone(), bgzf(&raw), gzip(&raw)] {
+            let mut input = VariantReader::from_reader(Cursor::new(bytes)).unwrap();
+            let mut sites = Vec::new();
+            let (matrix, stats) = collect(&mut input, &config, Some(&mut sites)).unwrap();
+            assert_eq!(stats.records, 2);
+            assert_eq!(stats.nucleotide_accepted, 2);
+            assert_eq!(stats.nucleotide_missing_calls, missing);
+            assert_eq!(stats.binary_eligible, 2);
+            assert_eq!(stats.binary_accepted, 0);
+            assert_eq!(stats.binary_missing_calls, 2);
+            assert_eq!(stats.binary_unsupported_ploidy_calls, 4);
+            assert_eq!(
+                String::from_utf8(sites).unwrap(),
+                format!(
+                    "#CHROM\tPOS\tNUM_SAMPLES\nchr1\t9\t{}\nchr1\t2\t{}\n",
+                    called[0], called[1]
+                )
+            );
+            let mut phy = Vec::new();
+            let mut fasta = Vec::new();
+            writers::phylip::write(&mut phy, &matrix, &[0, 1, 2, 3]).unwrap();
+            writers::fasta::write(&mut fasta, &matrix, &[0, 1, 2, 3]).unwrap();
+            assert_eq!(phy, expected_phy.as_bytes());
+            assert_eq!(fasta, expected_fasta.as_bytes());
+        }
+    }
+}
+
+#[test]
+fn public_writers_reject_zero_sites_before_writing() {
+    use vcf2phylip_rs::{matrix::Matrix, writers};
+    let matrix = Matrix::new(vec!["S".into()]).unwrap();
+    let mut output = Vec::new();
+    assert!(
+        writers::fasta::write(&mut output, &matrix, &[0])
+            .unwrap_err()
+            .to_string()
+            .contains("zero-site")
+    );
+    assert!(output.is_empty());
+    assert!(
+        writers::phylip::write(&mut output, &matrix, &[0])
+            .unwrap_err()
+            .to_string()
+            .contains("zero-site")
+    );
+    assert!(output.is_empty());
+}
+
 #[test]
 fn genotype_indices_missingness_ploidy_and_phase() {
     use vcf::variant::record::samples::series::value::genotype::Phasing;
@@ -299,7 +467,7 @@ fn config_validates_names_thresholds_and_reserved_flags() {
 }
 
 #[test]
-fn actual_cli_never_fakes_conversion_or_creates_output() {
+fn actual_cli_inspection_never_creates_output() {
     let dir = tempfile::tempdir().unwrap();
     let input = dir.path().join("input.wrong-extension");
     std::fs::write(&input, gzip(one("0/1").as_bytes())).unwrap();
@@ -319,7 +487,6 @@ fn actual_cli_never_fakes_conversion_or_creates_output() {
     assert!(stdout.contains("Inspection only"));
     assert!(stdout.contains("records: 1"));
     assert!(String::from_utf8(output.stderr).unwrap().contains("capped"));
-    assert!(!run(&[]).status.success());
     assert!(!run(&["--inspect", "--fasta"]).status.success());
     let seeded = run(&[
         "--inspect",
@@ -351,6 +518,316 @@ fn actual_cli_never_fakes_conversion_or_creates_output() {
                 .success()
         );
     }
+}
+
+fn conversion_fixture() -> String {
+    // Uniform within-record ploidy avoids noodles' test-fixture BCF encoder
+    // inserting vector-end padding after every allele of a shorter genotype.
+    data("long_sample_name:1\tB,C\tΩ", "chr1\t9\t.\ta\tc\t.\tPASS\t.\tGT\t0/1\t1/1\t0/0\nchr2\t2\t.\tA\tAT\t.\tPASS\t.\tGT\t0/0\t0/1\t0/0\nchr1\t1\t.\tA\tC,G,T\t.\tPASS\t.\tGT\t0/1/2\t0/./.\t3/3/3\nchr1\t1\t.\tG\tT\t.\tPASS\t.\tGT\t1/1/1\t0/1/1\t././.\nchr2\t5\t.\tG\t<DEL>\t.\tPASS\t.\tGT\t0\t0\t0\n")
+        .replace("##contig=<ID=chr1,length=1000>\n", "##contig=<ID=chr1,length=1000>\n##contig=<ID=chr2,length=1000>\n")
+}
+
+#[test]
+fn conversion_transport_equivalence_and_hand_computed_outputs() {
+    use vcf2phylip_rs::conversion::convert;
+    let text = conversion_fixture();
+    for bytes in [
+        text.as_bytes().to_vec(),
+        gzip(text.as_bytes()),
+        bgzf(text.as_bytes()),
+        bcf_bytes(&text),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("example.vcf.middle.VCF.GZ");
+        std::fs::write(&input, bytes).unwrap();
+        let cli = Cli::try_parse_from([
+            "app",
+            "-i",
+            input.to_str().unwrap(),
+            "--output-folder",
+            dir.path().to_str().unwrap(),
+            "-m",
+            "2",
+            "-f",
+            "-w",
+            "-o",
+            "B,C",
+        ])
+        .unwrap();
+        let report = convert(&cli).unwrap();
+        assert_eq!(report.stats.records, 5);
+        assert_eq!(report.stats.rejected_non_snp, 2);
+        assert_eq!(report.stats.nucleotide_accepted, 3);
+        assert_eq!(report.matrix_bytes, 9);
+        let base = dir.path().join("example.vcf.middle.min2");
+        let read =
+            |ext: &str| std::fs::read_to_string(format!("{}.{ext}", base.display())).unwrap();
+        assert_eq!(
+            read("phy"),
+            "3 3\nB,C  CNK\nlong_sample_name:1  MVT\nΩ  ATN\n"
+        );
+        assert_eq!(
+            read("fasta"),
+            ">B,C\nCNK\n>long_sample_name:1\nMVT\n>Ω\nATN\n"
+        );
+        assert_eq!(
+            read("used_sites.tsv"),
+            "#CHROM\tPOS\tNUM_SAMPLES\nchr1\t9\t3\nchr1\t1\t2\nchr1\t1\t2\n"
+        );
+        assert!(
+            convert(&cli)
+                .unwrap_err()
+                .to_string()
+                .contains("existing output")
+        );
+        assert_eq!(
+            read("phy"),
+            "3 3\nB,C  CNK\nlong_sample_name:1  MVT\nΩ  ATN\n"
+        );
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 4);
+    }
+}
+
+#[test]
+fn conversion_seed_order_selection_and_partial_policy() {
+    use vcf2phylip_rs::conversion::convert;
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("input.vcf");
+    std::fs::write(&input, conversion_fixture()).unwrap();
+    let mut baseline = None;
+    for (prefix, flags) in [
+        ("both", vec!["-f"]),
+        ("fasta", vec!["-p", "-f", "-o", "Ω", "-o", "B,C"]),
+    ] {
+        let cli = Cli::try_parse_from(
+            [
+                "app",
+                "-i",
+                input.to_str().unwrap(),
+                "--output-folder",
+                dir.path().to_str().unwrap(),
+                "--output-prefix",
+                prefix,
+                "-m",
+                "1",
+                "-r",
+                "--seed",
+                "42",
+            ]
+            .into_iter()
+            .chain(flags),
+        )
+        .unwrap();
+        convert(&cli).unwrap();
+        let fasta =
+            std::fs::read_to_string(dir.path().join(format!("{prefix}.min1.fasta"))).unwrap();
+        let lines: Vec<_> = fasta.lines().collect();
+        let by_name: std::collections::BTreeMap<_, _> = lines
+            .chunks(2)
+            .map(|c| (c[0].to_owned(), c[1].to_owned()))
+            .collect();
+        if let Some(expected) = &baseline {
+            assert_eq!(&by_name, expected);
+        } else {
+            baseline = Some(by_name);
+        }
+        if prefix == "fasta" {
+            assert!(fasta.starts_with(">Ω\n"));
+            assert!(!dir.path().join("fasta.min1.phy").exists());
+        }
+    }
+    let cli = Cli::try_parse_from([
+        "app",
+        "-i",
+        input.to_str().unwrap(),
+        "--output-folder",
+        dir.path().to_str().unwrap(),
+        "--output-prefix",
+        "partial",
+        "-m",
+        "3",
+        "--partial-missing",
+        "called-alleles",
+    ])
+    .unwrap();
+    let report = convert(&cli).unwrap();
+    assert_eq!(report.stats.nucleotide_accepted, 2);
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("partial.min3.phy")).unwrap(),
+        "3 2\nlong_sample_name:1  MV\nB,C  CA\nΩ  AT\n"
+    );
+}
+
+#[test]
+fn conversion_failures_leave_no_final_outputs() {
+    use vcf2phylip_rs::conversion::convert;
+    for (text, flags) in [
+        (data("S", ""), vec![]),
+        (data("S", "chr1\t1\t.\tA\tAT\t.\tPASS\t.\tGT\t0\n"), vec![]),
+        (
+            format!(
+                "{}bad late record\n",
+                data("S", "chr1\t1\t.\tA\tC\t.\tPASS\t.\tGT\t0\n")
+            ),
+            vec![],
+        ),
+        (one("0/1"), vec![]), // whitespace identifier: inspect permits it, conversion does not
+        (data("S", ""), vec!["-n"]),
+        (data("S", ""), vec!["-b"]),
+        (data("S", ""), vec!["-p"]),
+        (data("S", ""), vec!["-o", "unknown"]),
+        (data("S", ""), vec!["--output-prefix", "../escape"]),
+        (data("S", ""), vec!["--output-prefix", "/absolute"]),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("in.vcf");
+        std::fs::write(&input, text).unwrap();
+        let folder = dir.path().join("out");
+        let cli = Cli::try_parse_from(
+            [
+                "app",
+                "-i",
+                input.to_str().unwrap(),
+                "--output-folder",
+                folder.to_str().unwrap(),
+                "-f",
+                "-w",
+            ]
+            .into_iter()
+            .chain(flags.clone()),
+        )
+        .unwrap();
+        assert!(convert(&cli).is_err(), "{flags:?}");
+        if folder.exists() {
+            assert_eq!(std::fs::read_dir(folder).unwrap().count(), 0);
+        }
+    }
+}
+
+#[test]
+fn conversion_no_clobber_links_collisions_and_bad_directory() {
+    use vcf2phylip_rs::conversion::convert;
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.vcf");
+    let text = data("S", "chr1\t1\t.\tA\tC\t.\tPASS\t.\tGT\t0/1\n");
+    std::fs::write(&input, &text).unwrap();
+    let cli = || {
+        Cli::try_parse_from([
+            "app",
+            "-i",
+            input.to_str().unwrap(),
+            "--output-folder",
+            dir.path().to_str().unwrap(),
+            "-f",
+        ])
+        .unwrap()
+    };
+    let target = dir.path().join("in.min1.phy");
+    std::fs::hard_link(&input, &target).unwrap();
+    assert!(convert(&cli()).is_err());
+    assert_eq!(std::fs::read_to_string(&input).unwrap(), text);
+    std::fs::remove_file(&target).unwrap();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(dir.path().join("missing"), &target).unwrap();
+        assert!(convert(&cli()).is_err());
+        assert!(
+            std::fs::symlink_metadata(&target)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        std::fs::remove_file(&target).unwrap();
+    }
+    std::fs::create_dir(&target).unwrap();
+    assert!(convert(&cli()).is_err());
+    let mut config = cli();
+    config.output_folder = Some(input.join("impossible"));
+    assert!(convert(&config).is_err());
+    config.input = dir.path().join("absent");
+    assert!(convert(&config).is_err());
+    assert!(!dir.path().join("in.min1.fasta").exists());
+
+    // The input itself can have an alignment-like name; explicit prefixes must
+    // not allow the converter to replace it even though detection is by bytes.
+    let collision = dir.path().join("collision.min1.phy");
+    std::fs::write(&collision, &text).unwrap();
+    let mut config = cli();
+    config.input = collision.clone();
+    config.output_prefix = Some("collision".into());
+    assert!(convert(&config).is_err());
+    assert_eq!(std::fs::read_to_string(collision).unwrap(), text);
+}
+
+#[test]
+fn library_writers_wrap_validate_orders_and_propagate_io_errors() {
+    use vcf2phylip_rs::{
+        conversion::collect,
+        filter::ProcessingConfig,
+        genotype::{PartialMissingPolicy, Resolution},
+        writers,
+    };
+    let records = "chr1\t1\t.\tA\tC\t.\tPASS\t.\tGT\t0/1\n".repeat(81);
+    let mut input = reader(&data("long:sample,Ω", &records)).unwrap();
+    let config =
+        ProcessingConfig::new(1, None, PartialMissingPolicy::Missing, Resolution::Iupac).unwrap();
+    let (matrix, stats) = collect(&mut input, &config, None).unwrap();
+    assert_eq!(stats.nucleotide_accepted, 81);
+    let mut bytes = Vec::new();
+    writers::fasta::write(&mut bytes, &matrix, &[0]).unwrap();
+    assert_eq!(
+        String::from_utf8(bytes).unwrap(),
+        format!(">long:sample,Ω\n{}\nM\n", "M".repeat(80))
+    );
+    assert!(writers::phylip::write(Vec::new(), &matrix, &[]).is_err());
+    assert!(writers::fasta::write(Vec::new(), &matrix, &[1]).is_err());
+    struct Failing;
+    impl Write for Failing {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("injected failure"))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::other("injected flush failure"))
+        }
+    }
+    assert!(writers::fasta::write(Failing, &matrix, &[0]).is_err());
+    assert!(writers::phylip::write(Failing, &matrix, &[0]).is_err());
+}
+
+#[test]
+fn actual_cli_default_conversion_and_unsupported_mode_preflight() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.VCF");
+    std::fs::write(&input, data("S", "chr1\t1\t.\tA\tC\t.\tPASS\t.\tGT\t0/1\n")).unwrap();
+    let run = |flags: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_vcf2phylip-rs"))
+            .arg("-i")
+            .arg(&input)
+            .args(flags)
+            .current_dir(dir.path())
+            .output()
+            .unwrap()
+    };
+    assert!(
+        !run(&["-n", "--output-folder", "never-created"])
+            .status
+            .success()
+    );
+    assert!(!dir.path().join("never-created").exists());
+    let output = run(&[]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("in.min1.phy")).unwrap(),
+        "1 1\nS  M\n"
+    );
+    let output = run(&[]);
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("existing output")
+    );
 }
 
 #[test]
