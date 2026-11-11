@@ -11,6 +11,9 @@ use flate2::bufread::MultiGzDecoder;
 use noodles::{bcf, vcf};
 use vcf::variant::record_buf::samples::sample::{Value, value::Genotype};
 
+mod bounded_bcf;
+pub use bounded_bcf::BcfLimits;
+
 type Input = Box<dyn BufRead>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -21,7 +24,7 @@ pub enum Format {
 
 enum Adapter {
     Vcf(Input),
-    Bcf(bcf::io::Reader<Input>),
+    Bcf(Input),
 }
 
 /// Missing GT (absent FORMAT key or `.`) is None: ploidy is unknown.
@@ -40,6 +43,7 @@ pub struct VariantReader {
     records_read: u64,
     line: String,
     finished: bool,
+    bcf_limits: BcfLimits,
 }
 
 impl VariantReader {
@@ -52,6 +56,14 @@ impl VariantReader {
 
     /// Detect by bytes, not filename. Supports ordinary/multimember gzip and BGZF.
     pub fn from_reader(reader: impl BufRead + 'static) -> Result<Self> {
+        Self::from_reader_with_bcf_limits(reader, BcfLimits::default())
+    }
+
+    /// Override the BCF safety limits for trusted, unusually large datasets.
+    pub fn from_reader_with_bcf_limits(
+        reader: impl BufRead + 'static,
+        bcf_limits: BcfLimits,
+    ) -> Result<Self> {
         let mut input: Input = Box::new(reader);
         // BufRead does not promise any minimum fill size, so sniff using read_exact
         // and chain the consumed bytes back into the stream.
@@ -68,9 +80,8 @@ impl VariantReader {
                 prefix == b"BCF\x02\x02",
                 "unsupported BCF version (expected 2.2)"
             );
-            let mut reader = bcf::io::Reader::from(input);
-            let header = reader.read_header().context("BCF header")?;
-            (Adapter::Bcf(reader), header, Format::Bcf)
+            let header = bounded_bcf::read_header(&mut input, bcf_limits).context("BCF header")?;
+            (Adapter::Bcf(input), header, Format::Bcf)
         } else {
             ensure!(
                 prefix.starts_with(b"##fil"),
@@ -89,6 +100,7 @@ impl VariantReader {
             records_read: 0,
             line: String::new(),
             finished: false,
+            bcf_limits,
         })
     }
 
@@ -153,28 +165,28 @@ impl VariantReader {
                     let values: Vec<_> = sample.split(':').collect();
                     ensure!(
                         values.len() <= keys.len() && values.iter().all(|v| !v.is_empty()),
-                        "sample {}: invalid FORMAT value count or empty value",
+                        "sample {:?}: invalid FORMAT value count or empty value",
                         self.header.sample_names()[i]
                     );
                 }
                 vcf::io::Reader::new(Cursor::new(line.as_bytes()))
                     .read_record_buf(&self.header, &mut record)
-                    .with_context(|| format!("VCF {}:{}", fields[0], fields[1]))?;
+                    .with_context(|| format!("VCF {:?}:{:?}", fields[0], fields[1]))?;
             }
             Adapter::Bcf(input) => {
-                if input.get_mut().fill_buf()?.is_empty() {
+                if input.fill_buf()?.is_empty() {
                     return Ok(None);
                 }
-                // noodles treats an incomplete first length word as EOF; distinguish
-                // that from genuine EOF above, so truncated BCF never succeeds.
+                let frame = bounded_bcf::read_frame(input, &self.header, self.bcf_limits)?;
+                let mut decoder = bcf::io::Reader::from(Cursor::new(frame));
                 ensure!(
-                    input.read_record_buf(&self.header, &mut record)? != 0,
+                    decoder.read_record_buf(&self.header, &mut record)? != 0,
                     "truncated BCF record length"
                 );
             }
         }
         let context = format!(
-            "{}:{:?}",
+            "{:?}:{:?}",
             record.reference_sequence_name(),
             record.variant_start()
         );
