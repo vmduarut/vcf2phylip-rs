@@ -42,8 +42,10 @@ pub struct ProcessingConfig {
 }
 
 impl ProcessingConfig {
-    /// Minimum defaults to 4. A capped minimum is exposed via `minimum_samples`;
-    /// callers should warn when it differs from the requested value.
+    /// Low-level count-only constructor; `None` retains the legacy minimum of 4.
+    /// CLI callers pass the centralized effective count from `validate_samples`,
+    /// combining the absolute minimum and call rate. A capped minimum is exposed
+    /// via `minimum_samples`; callers should warn if it differs from the request.
     pub fn new(
         sample_count: usize,
         minimum: Option<usize>,

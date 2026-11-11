@@ -23,7 +23,7 @@ From the repository root, with Rust/Cargo 1.99.0 or later and a native linker:
 cargo install --path . --locked
 out=$(mktemp -d)
 vcf2phylip-rs -i examples/example.vcf --inspect
-vcf2phylip-rs -i examples/example.vcf -f -w --output-folder "$out"
+vcf2phylip-rs -i examples/example.vcf -m 4 --min-call-rate 0 -f -w --output-folder "$out"
 ```
 
 Ensure Cargo's bin directory is on your PATH. The conversion writes
@@ -82,9 +82,15 @@ transitively, and tempfile brings randomness dependencies for staging filenames.
   invalid FORMAT layout or damaged compressed input. No unsafe skip mode.
   Errors include record ordinal/successful count and contig/position when
   available. Success counts are printed only after the stream is drained.
-- The default minimum is 4, capped to the sample count with a warning; positive
-  user values are similarly capped, zero/negative values rejected. This is
-  applied independently to nucleotide-called and binary-encodable sample counts.
+- `-m/--min-samples-locus` is the absolute called-sample minimum (default **1**),
+  capped to the input sample count with a warning; zero/negative values fail.
+  `--min-call-rate` defaults to **0.9 (90%)**, accepting finite values in [0,1].
+  The effective minimum is `max(capped -m, ceil(rate × input sample count))`.
+  Both conditions apply independently to nucleotide-called and binary-encodable
+  sample counts, using all actual header samples (including outgroups).
+  **Intentional change from upstream/count-only filtering:** `-m 2` alone still
+  requires 90%; use `-m 2 --min-call-rate 0` for upstream-style count-only filtering,
+  or `-m 4 --min-call-rate 0` to reproduce the previous default.
 - `-o/--outgroup` requires an exact name; repeat it for multiple names, in
   requested order. Unknown or duplicate requests are errors. No comma/semicolon
   splitting, renaming, or actual sample reordering occurs during inspection.
@@ -95,10 +101,12 @@ transitively, and tempfile brings randomness dependencies for staging filenames.
 ### Logging and reports
 
 Lifecycle messages go to **stderr**: input start, actual header sample count and
-effective required sample count, then successful filter totals, persisted output paths and
+configured absolute minimum, call rate/percentage and effective required sample
+count, then successful filter totals, persisted output paths and
 elapsed wall time. Conversion summaries previously went to stdout; this is an
 intentional destination change. Conversion stdout is now empty; inspection's
-existing diagnostic stdout labels remain unchanged.
+existing diagnostic stdout labels remain, with additive configured minimum/rate
+lines and an effective-threshold annotation.
 
 `--quiet` suppresses informational messages, never warnings or errors. `--verbose`
 adds configuration and missing-call diagnostics; it conflicts with `--quiet`.
@@ -140,7 +148,7 @@ and the called-sample count under the selected partial policy.
 
 Outputs default to the current directory, or `--output-folder` (created if
 missing). Names are `<prefix>.min<N>.phy`, `.fasta`, `.used_sites.tsv`, with
-effective capped minimum N. The default prefix is the input basename with a
+effective combined minimum N (not just the requested `-m`). The default prefix is the input basename with a
 terminal `.vcf`/`.bcf` and optional `.gz`/`.bgz`/`.bgzf` removed case-insensitively;
 arbitrary middle `.vcf` substrings remain. Explicit prefixes must be nonempty
 basenames, not `.`/`..`, absolute paths or slash/backslash-containing paths.
@@ -232,8 +240,12 @@ header, detected format, compression status, successful record count and a
 `Variant` containing a noodles record plus optional genotype buffers in sample
 order. An error terminates the reader; callers must handle that error, not
 interpret a subsequent `None` as successful validation.
-`filter::ProcessingConfig::new` validates sample dimensions, positive minimum
-(default 4, capped), partial policy and allele resolution. Its `process` method
+`filter::ProcessingConfig::new` is a low-level count-only constructor validating
+sample dimensions, positive minimum (legacy `None` default 4, capped), partial
+policy and allele resolution. CLI inspection/conversion instead use
+`Cli::validate_samples` to compute the combined threshold once and pass it
+explicitly to this constructor. `Cli` struct literals now require
+`min_call_rate: f64` (normally `0.9`). `ProcessingConfig::process`
 returns a `ProcessedLocus` with nucleotide calls, optional binary calls,
 independent called counts and acceptance booleans. It never accumulates a matrix.
 `filter::Stats::observe` accumulates diagnostic counts; absent-GT diagnostics
@@ -257,6 +269,16 @@ backend. The public `collect` API intentionally remains in-memory; CLI conversio
 shares the same filter/collection loop for both backends.
 
 ## Scientific contract
+
+The default requires at least 90% of input samples called at each retained locus:
+three samples require three calls; `--min-call-rate 0.66` requires two. A stronger
+absolute `-m` still wins, `--min-call-rate 0` disables only the rate condition,
+and `--min-call-rate 1` requires every sample. Rates parse as finite `f64`; the
+threshold calculation uses integer arithmetic on its canonical shortest decimal
+representation, avoiding binary multiplication/ceil artifacts such as
+`0.07 × 100` spuriously requiring eight rather than seven calls. Nucleotide and
+diagnostic binary paths use the same effective count, but their own called
+criteria below; neither is based merely on non-`N` characters in output.
 
 By default, a genotype with more than one distinct known base is represented
 by its IUPAC ambiguity code: for example, A/G becomes `R` and C/T becomes `Y`.

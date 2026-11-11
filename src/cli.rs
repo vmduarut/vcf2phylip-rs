@@ -30,8 +30,18 @@ pub struct Cli {
     /// Existing directory for the disk matrix spool (default OS temporary dir).
     #[arg(long)]
     pub temp_dir: Option<PathBuf>,
-    #[arg(short = 'm', long, default_value = "4", value_parser = positive_usize)]
+    /// Absolute minimum called samples per locus (capped to input sample count).
+    /// Both this minimum and --min-call-rate must be met; -m alone does not
+    /// disable the default 90% requirement. Use --min-call-rate 0 for upstream
+    /// count-only filtering.
+    #[arg(short = 'm', long, default_value = "1", value_parser = positive_usize)]
     pub min_samples_locus: usize,
+    /// Minimum fraction of all input samples called per locus (finite 0..=1).
+    /// Requires ceil(rate * input samples), independently for nucleotide and
+    /// diagnostic binary calls. The effective minimum is the greater of this
+    /// requirement and -m/--min-samples-locus.
+    #[arg(long, default_value = "0.9", value_parser = parse_call_rate)]
+    pub min_call_rate: f64,
     /// Exact sample name; repeat for multiple outgroups (no delimiter splitting).
     #[arg(short, long)]
     pub outgroup: Vec<String>,
@@ -74,6 +84,8 @@ pub enum ConfigError {
     OutputUnsupported,
     #[error("minimum samples must be positive")]
     InvalidMinimum,
+    #[error("minimum call rate must be finite and between 0 and 1 inclusive")]
+    InvalidCallRate,
     #[error("outgroup is not an exact input sample name: {0:?}")]
     UnknownOutgroup(String),
     #[error("outgroup specified more than once: {0:?}")]
@@ -99,6 +111,37 @@ fn positive_usize(value: &str) -> Result<usize, String> {
         Ok(n) if n > 0 => Ok(n),
         _ => Err("minimum samples must be a positive integer".into()),
     }
+}
+
+fn parse_call_rate(value: &str) -> Result<f64, String> {
+    value
+        .parse::<f64>()
+        .ok()
+        .filter(|rate| rate.is_finite() && (0.0..=1.0).contains(rate))
+        .ok_or_else(|| ConfigError::InvalidCallRate.to_string())
+}
+
+/// Multiply the validated rate's canonical shortest decimal representation by
+/// the sample count with integer decimal arithmetic. This avoids binary-float
+/// multiplication/ceil artifacts (e.g. 0.07 * 100 > 7), without an epsilon that
+/// could erase a genuinely above-boundary decimal. u128 holds a usize * digit
+/// plus carry on all supported (32/64-bit) platforms. Even subnormal rates work.
+fn rate_minimum(rate: f64, samples: usize) -> usize {
+    if rate == 1.0 {
+        return samples;
+    }
+    let decimal = rate.to_string();
+    let Some((_, fraction)) = decimal.split_once('.') else {
+        return 0; // zero (including negative zero)
+    };
+    let mut carry = 0_u128;
+    let mut remainder = false;
+    for digit in fraction.bytes().rev() {
+        let product = u128::from(digit - b'0') * samples as u128 + carry;
+        remainder |= !product.is_multiple_of(10);
+        carry = product / 10;
+    }
+    carry as usize + usize::from(remainder)
 }
 
 fn parse_bytes(value: &str) -> Result<usize, String> {
@@ -148,6 +191,9 @@ impl Cli {
         if self.min_samples_locus == 0 {
             return Err(ConfigError::InvalidMinimum);
         }
+        if !self.min_call_rate.is_finite() || !(0.0..=1.0).contains(&self.min_call_rate) {
+            return Err(ConfigError::InvalidCallRate);
+        }
         if self.resolve_iupac != self.seed.is_some() {
             return Err(ConfigError::InvalidSeed);
         }
@@ -172,15 +218,16 @@ impl Cli {
                     .ok_or_else(|| ConfigError::UnknownOutgroup(name.clone()))?,
             );
         }
-        let minimum_samples = self.min_samples_locus.min(samples.len());
-        let warnings = if minimum_samples != self.min_samples_locus {
+        let absolute_minimum = self.min_samples_locus.min(samples.len());
+        let warnings = if absolute_minimum != self.min_samples_locus {
             vec![format!(
-                "minimum samples capped from {} to {minimum_samples} (input sample count)",
+                "minimum samples capped from {} to {absolute_minimum} (input sample count)",
                 self.min_samples_locus
             )]
         } else {
             Vec::new()
         };
+        let minimum_samples = absolute_minimum.max(rate_minimum(self.min_call_rate, samples.len()));
         Ok(ValidatedConfig {
             minimum_samples,
             outgroup_indices,
@@ -194,5 +241,23 @@ impl Cli {
             )
             .map_err(|_| ConfigError::InvalidMinimum)?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rate_minimum;
+
+    #[test]
+    fn decimal_thresholds_match_exact_hundredths_without_float_rounding() {
+        for numerator in 0..=100_usize {
+            let rate = format!("{}.{:02}", numerator / 100, numerator % 100)
+                .parse()
+                .unwrap();
+            for samples in (1..=300).chain([usize::MAX]) {
+                let expected = (numerator as u128 * samples as u128).div_ceil(100);
+                assert_eq!(rate_minimum(rate, samples) as u128, expected);
+            }
+        }
     }
 }

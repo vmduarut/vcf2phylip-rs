@@ -249,7 +249,8 @@ def main(argv=None):
                 if mode == "python":
                     command = [python_executable, str(python_tool)] + common
                 else:
-                    command = [str(rust)] + common + ["--storage", mode]
+                    # Match the baseline's count-only filtering and .min1 names.
+                    command = [str(rust)] + common + ["--min-call-rate", "0", "--storage", mode]
                     if mode == "disk":
                         command += ["--memory-limit", args.memory_limit, "--temp-dir", str(spool)]
                 metadata["pending_run"] = dict(argv=command, mode=mode, repeat=repeat)

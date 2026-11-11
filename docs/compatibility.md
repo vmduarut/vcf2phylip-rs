@@ -20,7 +20,8 @@ legal advice or a declaration of permission to relicense upstream material.
 | Argument | Current status |
 | --- | --- |
 | `-i`, `--input` | Required input path |
-| `-m`, `--min-samples-locus` | Positive integer, default 4, capped with warning; independently applied to DNA/binary |
+| `-m`, `--min-samples-locus` | Absolute positive integer minimum, default 1, capped with warning; combined with call rate |
+| `--min-call-rate` | Finite fraction in [0,1], default 0.9 (90%); requires ceil(rate × actual input sample count) |
 | `-o`, `--outgroup` | Exact validated name, repeatable; stable outgroup-first output order |
 | `--output-folder`, `--output-prefix` | Output directory and safe basename; defaults cwd and input basename |
 | `-p`, `--phylip-disable` | Disable default relaxed PHYLIP; requires FASTA |
@@ -40,6 +41,20 @@ intentionally differ from upstream. In particular, input sample names are not
 cleaned by removing `./`. Malformed records fail rather than being skipped.
 There is no promise of exact Python argparse behavior, output filenames,
 alignment bytes, counters, RNG sequence or performance equivalence.
+
+The minimum-name spelling is retained, but filtering defaults intentionally
+change from an absolute four samples to 90% of input samples with an absolute
+floor of one. Both conditions must hold: the effective threshold is
+`max(min(-m, sample count), ceil(rate × sample count))`, applied independently
+to nucleotide and diagnostic binary called counts under their existing policies.
+An explicit `-m 2` does **not** override the default 0.9 rate. Use
+`-m 2 --min-call-rate 0` for upstream-style count-only filtering, or
+`-m 4 --min-call-rate 0` for this project's prior default. Rate 1 requires all
+samples; outgroups remain part of the input denominator. Output `.min<N>` uses
+the effective combined count. Rates use finite `f64` values, with decimal
+integer threshold arithmetic to avoid floating multiplication boundary errors.
+Public `Cli` literals require the new `min_call_rate` field; the low-level
+`ProcessingConfig::new` count-only API retains its legacy `None` behavior.
 
 ## Known reference bugs are not compatibility promises
 

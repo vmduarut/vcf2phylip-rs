@@ -82,7 +82,8 @@ fn conversion_levels_streams_and_accurate_partition() {
                         "Converting file 'input.vcf':\n",
                         "warning: minimum samples capped from 4 to 2 (input sample count)\n",
                         "Number of samples in input: 2\n",
-                        "Minimum called samples per locus: 2\n",
+                        "Configured absolute minimum called samples: 4\nMinimum call rate: 0.9 (90.00%)\n",
+                        "Minimum called samples per locus: 2 (effective)\n",
                         "Input format: Vcf\nInput gzip/BGZF compressed: false\n",
                         "{}Total records processed: 7\n",
                         "Records excluded as non-SNP: 3 (includes absent ALT, noncanonical and duplicate alleles)\n",
@@ -201,8 +202,6 @@ fn observer_reuses_header_once_and_stats_partition_records() {
         "app",
         "-i",
         input.to_str().unwrap(),
-        "-m",
-        "2",
         "--output-folder",
         dir.path().to_str().unwrap(),
     ])
@@ -230,7 +229,8 @@ fn observer_reuses_header_once_and_stats_partition_records() {
 fn public_struct_literals_remain_compatible() {
     use vcf2phylip_rs::{filter::Stats, genotype::PartialMissingPolicy, storage::StorageMode};
 
-    // Deliberately no struct update syntax: logging adds no required library fields.
+    // Deliberately no struct update syntax: track the public shape, including
+    // the new rate field; logging itself still adds no required library fields.
     let cli = Cli {
         input: "input.vcf".into(),
         inspect: false,
@@ -238,6 +238,7 @@ fn public_struct_literals_remain_compatible() {
         memory_limit: None,
         temp_dir: None,
         min_samples_locus: 4,
+        min_call_rate: 0.9,
         outgroup: vec![],
         output_folder: None,
         output_prefix: None,

@@ -50,7 +50,16 @@ impl Reporter {
             reader.header().sample_names().len()
         ));
         self.info(format_args!(
-            "Minimum called samples per locus: {}",
+            "Configured absolute minimum called samples: {}",
+            cli.min_samples_locus
+        ));
+        self.info(format_args!(
+            "Minimum call rate: {} ({:.2}%)",
+            cli.min_call_rate,
+            cli.min_call_rate * 100.0
+        ));
+        self.info(format_args!(
+            "Minimum called samples per locus: {} (effective)",
             config.minimum_samples
         ));
         self.info(format_args!("Input format: {:?}", reader.format()));

@@ -62,7 +62,16 @@ fn main() -> Result<()> {
         reader.records_read()
     );
     println!(
-        "Minimum called samples: {} (applied independently to nucleotide and binary loci)",
+        "Configured absolute minimum called samples: {}",
+        cli.min_samples_locus
+    );
+    println!(
+        "Minimum call rate: {} ({:.2}%)",
+        cli.min_call_rate,
+        cli.min_call_rate * 100.0
+    );
+    println!(
+        "Minimum called samples: {} (effective; applied independently to nucleotide and binary loci)",
         config.minimum_samples
     );
     println!(

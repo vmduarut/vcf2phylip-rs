@@ -36,7 +36,9 @@ Python speedup claim. Neither mode prints automatic speedup conclusions.
 
 The generator is deterministic for the recorded Python version/seed/settings.
 It emits canonical A/C biallelic SNPs and fully called diploids or explicit
-`./.`. Sample S0 is always called, so `-m 1` retains exactly all generated sites.
+`./.`. Sample S0 is always called, so upstream `-m 1` retains exactly all
+generated sites. Rust runs explicitly add `--min-call-rate 0` to match that
+count-only filter rather than applying the new default 90% requirement.
 This avoids known upstream partial-missing/multidigit/symbolic-allele bugs and
 cross-language RNG differences. No randomized IUPAC resolution is requested.
 All runs request PHYLIP, FASTA and retained-site reports. Validation compares

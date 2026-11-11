@@ -11,7 +11,17 @@ fn documented_example_matches_hand_computed_outputs_in_both_backends() {
         command
             .arg("-i")
             .arg(&input)
-            .args(["--storage", storage, "-f", "-w", "--output-folder"])
+            .args([
+                "--storage",
+                storage,
+                "-m",
+                "4",
+                "--min-call-rate",
+                "0",
+                "-f",
+                "-w",
+                "--output-folder",
+            ])
             .arg(&output);
         if storage == "disk" {
             command.args(["--memory-limit", "4B", "--temp-dir"]);

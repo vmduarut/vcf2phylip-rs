@@ -446,8 +446,19 @@ fn bcf_missing_gt_at_locus_is_not_reference() {
 #[test]
 fn config_validates_names_thresholds_and_reserved_flags() {
     let samples = vec!["./A".into(), "B,C".into()];
-    let cli =
-        Cli::try_parse_from(["app", "-i", "x", "--inspect", "-o", "B,C", "-o", "./A"]).unwrap();
+    let cli = Cli::try_parse_from([
+        "app",
+        "-i",
+        "x",
+        "--inspect",
+        "-m",
+        "4",
+        "-o",
+        "B,C",
+        "-o",
+        "./A",
+    ])
+    .unwrap();
     let config = cli.validate_samples(&samples).unwrap();
     assert_eq!(config.minimum_samples, 2);
     assert_eq!(config.outgroup_indices, [1, 0]);
@@ -481,7 +492,7 @@ fn actual_cli_inspection_never_creates_output() {
             .output()
             .unwrap()
     };
-    let output = run(&["--inspect"]);
+    let output = run(&["--inspect", "-m", "4"]);
     assert!(output.status.success(), "{:?}", output);
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("Inspection only"));
@@ -572,6 +583,8 @@ fn disk_memory_identical_across_tiles_transports_and_policies() {
                     "test",
                     "-m",
                     "1",
+                    "--min-call-rate",
+                    "0",
                     "-f",
                     "-w",
                     "-o",
@@ -716,6 +729,8 @@ fn conversion_transport_equivalence_and_hand_computed_outputs() {
             dir.path().to_str().unwrap(),
             "-m",
             "2",
+            "--min-call-rate",
+            "0",
             "-f",
             "-w",
             "-o",
@@ -778,6 +793,8 @@ fn conversion_seed_order_selection_and_partial_policy() {
                 prefix,
                 "-m",
                 "1",
+                "--min-call-rate",
+                "0",
                 "-r",
                 "--seed",
                 "42",

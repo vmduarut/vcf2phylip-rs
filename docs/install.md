@@ -29,16 +29,17 @@ URL/version.
 `examples/example.vcf` is independently generated, with four samples and three
 canonical SNP records (including one multiallelic SNP). The expected files are
 hand-computed, not copied from upstream. Default IUPAC calls retain all three
-sites at the default four-sample threshold. For example, alpha's genotypes
+sites at an explicit four-sample, count-only threshold (also the effective
+default for this four-sample input). For example, alpha's genotypes
 0/0, 0/1 and 1/2 produce `A`, `Y` and `W` respectively.
 
 Run from the repository root; `mktemp` avoids output-name collisions:
 
 ```sh
 out=$(mktemp -d)
-cargo run --locked -- -i examples/example.vcf --inspect
-cargo run --locked -- -i examples/example.vcf -f -w --output-folder "$out/memory"
-cargo run --locked -- -i examples/example.vcf -f -w --storage disk \
+cargo run --locked -- -i examples/example.vcf --inspect -m 4 --min-call-rate 0
+cargo run --locked -- -i examples/example.vcf -m 4 --min-call-rate 0 -f -w --output-folder "$out/memory"
+cargo run --locked -- -i examples/example.vcf -m 4 --min-call-rate 0 -f -w --storage disk \
   --memory-limit 4B --temp-dir "$out" --output-folder "$out/disk"
 for backend in memory disk; do
   diff examples/expected.phy "$out/$backend/example.min4.phy"
@@ -57,7 +58,8 @@ called samples. The two backends should produce the same files.
 
 Lifecycle/status messages and conversion success summaries go to stderr, not
 stdout (the conversion summary destination intentionally changed). Inspection's
-diagnostic stdout retains existing labels unchanged. Use `--quiet` to suppress informational
+diagnostic stdout retains existing labels with additive configured minimum/rate
+lines and an effective-threshold annotation. Use `--quiet` to suppress informational
 stderr while preserving warnings/errors, or `--verbose` for extra configuration
 and missing-call diagnostics; these flags conflict. `-v` still prints version.
 For example, capture inspection with `--inspect --quiet > inspection.txt`, or
@@ -72,7 +74,7 @@ Outputs are refused by default; use a new directory/prefix, or explicitly rerun
 with `--force` to replace only selected regular output files:
 
 ```sh
-cargo run --locked -- -i examples/example.vcf -f -w --output-folder "$out/memory" --force
+cargo run --locked -- -i examples/example.vcf -m 4 --min-call-rate 0 -f -w --output-folder "$out/memory" --force
 ```
 
 Existing outputs survive input/validation/staged-writing errors. Publication is
@@ -101,6 +103,17 @@ algorithm, not upstream Python RNG equivalence. Refer to the README and
 [compatibility/provenance](compatibility.md) for the full scientific contract.
 
 ## Interpreting an alignment
+
+`-m/--min-samples-locus` keeps its upstream name but now defaults to 1.
+`--min-call-rate` defaults to 0.9 (90%), accepting finite values in [0,1].
+Both conditions must hold: the effective minimum is the larger of `-m` (capped
+to input sample count with a warning) and `ceil(rate × actual input samples)`.
+Three samples therefore require three calls by default, or two with
+`--min-call-rate 0.66`. **`-m 2` alone does not disable the default 90% condition.**
+Use `-m 2 --min-call-rate 0` for upstream-style count-only filtering;
+`-m 4 --min-call-rate 0` restores this project's previous default. Rate 1
+requires all samples. Inspection, memory and disk conversion share the same
+threshold, reflected in the output `.min<N>` suffix and reports.
 
 IUPAC symbols encode the set of known bases, not phase or allele dosage: both
 A/A/G and A/G/G become `R`. `N` can mean a missing call or a called four-base
