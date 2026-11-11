@@ -30,7 +30,7 @@ Ensure Cargo's bin directory is on your PATH. The conversion writes
 `example.min4.phy`, `example.min4.fasta`, and `example.min4.used_sites.tsv` in
 the new directory; they can be compared with the corresponding `examples/expected.*`
 files. `-f` adds FASTA to the default PHYLIP output, and `-w` records retained
-sites. Existing outputs are never overwritten. `--locked` requires Cargo to use
+sites. Existing outputs are refused unless `--force` is supplied. `--locked` requires Cargo to use
 the checked-in lockfile without changing dependency resolution.
 
 For more options (replace input and scratch paths with your own):
@@ -41,6 +41,7 @@ cargo run --locked -- --input variants.vcf.gz --inspect
 cargo run --locked -- -i variants.bcf --inspect -m 4 -o 'exact sample name'
 cargo run --locked -- -i variants.vcf --inspect --partial-missing called-alleles -r --seed 42
 cargo run --locked -- -i variants.vcf.gz --output-folder alignments
+cargo run --locked -- -i variants.vcf.gz --output-folder alignments --force
 cargo run --locked -- -i variants.bcf -f -w -o outgroup --output-prefix study
 cargo run --locked -- -i variants.vcf -p -f -r --seed 42
 cargo run --locked -- -i variants.vcf --storage disk --memory-limit 64MiB --temp-dir /existing/scratch -f -w
@@ -51,7 +52,7 @@ Tested with Rust/Cargo **1.99.0** on Linux; `rust-version = "1.99"` is the
 conservative tested minimum, not a claim that earlier toolchains cannot work.
 Direct dependencies are exactly pinned and `Cargo.lock` is included. All
 requested versions resolved: noodles 0.119.0, clap 4.6.7, thiserror 2.0.21,
-anyhow 1.0.104, flate2 1.1.11, and tempfile 3.27.0. No external compression
+anyhow 1.0.104, flate2 1.1.11, tempfile 3.27.0, and same-file 1.0.6. No external compression
 library is needed. Seeded resolution uses exactly
 pinned rand_chacha 0.10.0 (rand_core 0.10.1 in the lockfile), without the rand
 convenience API. There is no application parallelism; noodles brings rayon
@@ -144,9 +145,18 @@ terminal `.vcf`/`.bcf` and optional `.gz`/`.bgz`/`.bgzf` removed case-insensitiv
 arbitrary middle `.vcf` substrings remain. Explicit prefixes must be nonempty
 basenames, not `.`/`..`, absolute paths or slash/backslash-containing paths.
 
-All selected targets are preflighted before records are processed. Existing
-files, directories, hardlinks and even dangling symlinks are refused. There is
-deliberately no overwrite/`--force` option, including for aliases of the input.
+All selected targets are preflighted before records are processed. By default,
+existing targets (including dangling symlinks) are refused. `--force` permits
+replacement of existing regular files; checks refuse observed directories,
+symlinks, other non-regular targets, and aliases of the input (including hardlinks). Only outputs
+selected for this run are replaced; other files are untouched. `--inspect`
+rejects `--force`, like other output flags. Targets are checked again immediately
+before each publication, but these checks are not atomic with replacement: a
+racing entry, including a symlink, can be replaced. Rename replaces the target
+directory entry without following a target symlink. Observed existing regular
+file permissions are applied to the staged file before replacement; failure to
+apply them aborts that publication. Ownership, ACLs and other metadata are not
+copied; newly created outputs retain the temporary file's restrictive permissions.
 Validated flags, sample labels and outgroups precede output directory creation.
 Files are staged with `NamedTempFile` in the target directory; all input must
 validate through EOF and every writer must flush successfully before publication.
@@ -154,10 +164,13 @@ Header-only or zero-retained-locus conversion is an actionable error with no
 final alignment or site files. Ordinary errors clean temporary staging files;
 an empty newly created output directory may remain.
 
-Final publication uses `persist_noclobber`: atomic **per file**, not a transaction
-across all selected files. A filesystem failure or racing creator during
-publication can leave earlier outputs finalized; diagnostics state this, and no
-rollback deletes potentially replaced files. No durability across power loss,
+Final publication uses `persist_noclobber` by default, or `persist` with `--force`:
+atomic **per file**, not a transaction across all selected files. Existing outputs
+remain unchanged on input, validation or staged-writing errors. A filesystem
+failure or racing creator during publication can leave earlier outputs finalized
+(and their old contents replaced with `--force`); later outputs remain unchanged.
+Diagnostics state this, and no rollback deletes or restores published files.
+No durability across power loss,
 cleanup after SIGKILL, or protection from a hostile directory owner is promised.
 
 ### Storage and resource limits
@@ -227,7 +240,7 @@ independent called counts and acceptance booleans. It never accumulates a matrix
 remain separate. `genotype` exposes call types/policies and single-call functions;
 `iupac::BaseMask` distinguishes known four-base ambiguity from missing data.
 `cli::Cli` validates mode, sample names and seed pairing.
-`conversion::convert(&Cli)` runs the staged no-clobber conversion and returns
+`conversion::convert(&Cli)` runs the staged conversion (no-clobber unless `Cli::force`) and returns
 statistics/output paths; `conversion::collect` builds a `matrix::Matrix` from a
 reader and processing config, optionally streaming a site report to `Write`.
 `convert` retains its warning-only stderr behavior. `convert_with_observer`

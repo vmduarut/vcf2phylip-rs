@@ -241,6 +241,7 @@ fn public_struct_literals_remain_compatible() {
         outgroup: vec![],
         output_folder: None,
         output_prefix: None,
+        force: false,
         phylip_disable: false,
         fasta: false,
         resolve_iupac: false,

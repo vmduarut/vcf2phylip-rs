@@ -61,6 +61,9 @@ impl Reporter {
         if self.verbose {
             self.info("Configuration:");
             self.info(format_args!("Storage: {:?}", cli.storage));
+            if cli.force {
+                self.info("Replace existing output files: true");
+            }
             self.info(format_args!(
                 "Disk cell-buffer budget: {} bytes (disk only)",
                 cli.memory_limit.unwrap_or(64 * 1024 * 1024)

@@ -41,6 +41,9 @@ pub struct Cli {
     /// Output basename (defaults to input basename without known format suffixes).
     #[arg(long)]
     pub output_prefix: Option<String>,
+    /// Replace existing regular output files after successful processing (per-file atomic).
+    #[arg(long)]
+    pub force: bool,
     /// Disable the default relaxed PHYLIP output.
     #[arg(short = 'p', long)]
     pub phylip_disable: bool,
@@ -132,6 +135,7 @@ impl Cli {
                 || self.temp_dir.is_some()
                 || self.output_folder.is_some()
                 || self.output_prefix.is_some()
+                || self.force
                 || self.phylip_disable
                 || self.fasta
                 || self.write_used_sites)

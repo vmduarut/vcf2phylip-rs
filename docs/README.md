@@ -8,7 +8,7 @@
   differences from upstream and deferred formats.
 - [Scientific contract](../README.md#scientific-contract) and
   [output safety and resource limits](../README.md#conversion-and-output-safety):
-  interpretation, filtering, storage and no-overwrite behavior.
+  interpretation, filtering, storage and opt-in output replacement behavior.
 - [Benchmarking](benchmarking.md): opt-in local measurements and their limits;
   it does not establish a published speedup.
 

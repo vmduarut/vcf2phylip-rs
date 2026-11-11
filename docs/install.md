@@ -68,7 +68,22 @@ and elapsed wall time; failed runs never print successful completion.
 Four bytes is intentionally tiny to exercise tile boundaries, not a recommended
 production budget. It bounds the cell buffer only, not RSS. See the README's
 resource contract and [benchmarking](benchmarking.md) before sizing large jobs.
-Outputs are never overwritten; use a new directory or prefix for each run.
+Outputs are refused by default; use a new directory/prefix, or explicitly rerun
+with `--force` to replace only selected regular output files:
+
+```sh
+cargo run --locked -- -i examples/example.vcf -f -w --output-folder "$out/memory" --force
+```
+
+Existing outputs survive input/validation/staged-writing errors. Publication is
+atomic per file, not across all outputs: a later publication failure can leave
+earlier files replaced, with no rollback. Checks refuse observed directories,
+symlinks and aliases of the input (including hardlinks), even with `--force`.
+Checks are not atomic with replacement: racing entries, including symlinks, can
+be replaced, but rename does not follow a target symlink. Observed regular-file
+permissions are copied to the staged replacement (failure aborts publication),
+not ownership or ACLs. See the README's output safety contract for concurrency
+and durability limitations.
 
 Other supported modes (replace paths with your own; scratch must exist):
 

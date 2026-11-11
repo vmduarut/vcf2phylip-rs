@@ -87,7 +87,7 @@ fn collect_into(
     Ok((matrix, stats))
 }
 
-/// Convert with no-clobber output safety. No final output is published before EOF
+/// Convert with opt-in output replacement. No final output is published before EOF
 /// validation and all writes/flushes succeed. Finalization is per-file atomic.
 pub fn convert(cli: &Cli) -> Result<ConversionReport> {
     convert_with_observer(cli, |_, config| {
@@ -136,9 +136,7 @@ pub fn convert_with_observer(
     if cli.write_used_sites {
         targets.push(folder.join(format!("{base}.used_sites.tsv")));
     }
-    // Existing inputs, including hardlink/symlink aliases, are existing targets
-    // and are always refused; there is deliberately no --force escape hatch.
-    output::preflight(&targets)?;
+    output::preflight(&targets, &cli.input, cli.force)?;
     std::fs::create_dir_all(&folder)
         .with_context(|| format!("creating output directory {}", folder.display()))?;
     let mut staged = targets
@@ -159,9 +157,14 @@ pub fn convert_with_observer(
     if cli.fasta {
         writers::fasta::write(staged[index].file.as_file_mut(), &matrix, &order)?;
     }
+    // Finish every staged write before publishing any output. Never roll back by
+    // deleting paths: in force mode they may have held preexisting user files.
+    for file in &mut staged {
+        file.file.flush()?;
+    }
     let mut outputs = Vec::new();
     for file in staged {
-        outputs.push(file.persist()?);
+        outputs.push(file.persist(&cli.input, cli.force)?);
     }
     Ok(ConversionReport {
         stats,
