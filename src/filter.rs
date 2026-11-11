@@ -168,6 +168,17 @@ pub struct Stats {
 }
 
 impl Stats {
+    /// SNP-eligible records rejected by the nucleotide called-sample threshold.
+    ///
+    /// For loci from `ProcessingConfig::process`, biological rejection returns
+    /// before calling samples and always sets nucleotide acceptance to false.
+    /// Otherwise acceptance is exactly the called-sample threshold comparison.
+    /// Thus rejected, below-minimum and accepted records partition `records`.
+    /// Requires counters accumulated from those loci, without manual mutation.
+    pub fn nucleotide_below_minimum(&self) -> u64 {
+        self.records - self.rejected_non_snp - self.nucleotide_accepted
+    }
+
     /// Call exactly once per processed record, including biological rejections.
     pub fn observe(&mut self, locus: &ProcessedLocus) {
         self.records += 1;

@@ -91,6 +91,32 @@ transitively, and tempfile brings randomness dependencies for staging filenames.
   matrices or used-site files. Output flags fail with `--inspect`, so they cannot silently be
   ignored. `--help`, `--version` and upstream-style `-v` work without input.
 
+### Logging and reports
+
+Lifecycle messages go to **stderr**: input start, actual header sample count and
+effective required sample count, then successful filter totals, persisted output paths and
+elapsed wall time. Conversion summaries previously went to stdout; this is an
+intentional destination change. Conversion stdout is now empty; inspection's
+existing diagnostic stdout labels remain unchanged.
+
+`--quiet` suppresses informational messages, never warnings or errors. `--verbose`
+adds configuration and missing-call diagnostics; it conflicts with `--quiet`.
+`-v` still means version, not verbose. For example:
+
+```sh
+vcf2phylip-rs -i examples/example.vcf --inspect --quiet > inspection.txt
+vcf2phylip-rs -i examples/example.vcf --inspect --verbose 2> run.log
+```
+
+Record totals partition into rejected non-SNP, below minimum called samples,
+and retained nucleotide loci. The broad non-SNP category includes absent ALT,
+noncanonical alleles (including indels/symbolic alleles), and duplicate alleles.
+Below-minimum counts only SNP-eligible records; missing **sample calls** are not
+rejected loci. No progress percentages, extra input scans, or per-sample stages
+are inferred. Completion is reported only after successful processing and, for
+conversion, persistence of all selected outputs. On partial publication failure,
+the command fails without a success summary (see output safety below).
+
 ## Conversion and output safety
 
 Without `--inspect`, relaxed sequential PHYLIP is the default. `-f` adds FASTA;
@@ -204,6 +230,10 @@ remain separate. `genotype` exposes call types/policies and single-call function
 `conversion::convert(&Cli)` runs the staged no-clobber conversion and returns
 statistics/output paths; `conversion::collect` builds a `matrix::Matrix` from a
 reader and processing config, optionally streaming a site report to `Write`.
+`convert` retains its warning-only stderr behavior. `convert_with_observer`
+instead calls a header/config callback once, before record processing; that
+entry point never prints and the caller owns warning reporting. Neither library
+entry point prints informational lifecycle messages.
 `writers::{fasta,phylip}::write` accept generic `Write`, a matrix and a sample
 index permutation, and propagate buffered write/flush failures.
 Both writers now accept any `matrix::Alignment` (existing `&Matrix` calls remain

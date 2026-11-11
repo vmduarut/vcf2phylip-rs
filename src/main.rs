@@ -3,30 +3,43 @@ use clap::Parser;
 use vcf2phylip_rs::filter::Stats;
 use vcf2phylip_rs::{cli::Cli, reader::VariantReader};
 
+mod logging;
+
+/// Binary-only options leave the library's public configuration shape unchanged.
+#[derive(Debug, Parser)]
+#[command(
+    version,
+    disable_version_flag = true,
+    about = "Convert VCF/BCF to FASTA and relaxed PHYLIP alignments"
+)]
+struct Args {
+    #[command(flatten)]
+    cli: Cli,
+    /// Suppress informational stderr messages (not warnings or errors).
+    #[arg(long, conflicts_with = "verbose")]
+    quiet: bool,
+    /// Include extra configuration and call diagnostics on stderr.
+    #[arg(long, conflicts_with = "quiet")]
+    verbose: bool,
+}
+
 fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let args = Args::parse();
+    let cli = args.cli;
     cli.validate_mode()?;
+    let log = logging::Reporter::new(args.quiet, args.verbose);
+    log.start(&cli);
     if !cli.inspect {
-        let report = vcf2phylip_rs::conversion::convert(&cli)?;
-        println!(
-            "Converted {} records; retained {} nucleotide loci; {} samples; matrix payload {} bytes ({:?}, not peak RSS).",
-            report.stats.records,
-            report.stats.nucleotide_accepted,
-            report.samples,
-            report.matrix_bytes,
-            report.storage
-        );
-        for path in report.outputs {
-            println!("Wrote {}", path.display());
-        }
+        let report = vcf2phylip_rs::conversion::convert_with_observer(&cli, |reader, config| {
+            log.header(reader, config, &cli);
+        })?;
+        log.converted(&report);
         return Ok(());
     }
     let mut reader = VariantReader::open(&cli.input)?;
     let samples: Vec<_> = reader.header().sample_names().iter().cloned().collect();
     let config = cli.validate_samples(&samples)?;
-    for warning in config.warnings {
-        eprintln!("warning: {warning}");
-    }
+    log.header(&reader, &config, &cli);
     let mut missing_gt = 0_u64;
     let mut stats = Stats::default();
     while let Some(variant) = reader.next_variant()? {
@@ -69,5 +82,6 @@ fn main() -> Result<()> {
         "Nucleotide partial policy: {:?}; random seed: {:?}",
         cli.partial_missing, cli.seed
     );
+    log.inspected(&stats);
     Ok(())
 }

@@ -55,6 +55,16 @@ contains `alpha: AYW`, `beta: RTR`, `gamma: GCT` and `delta: ATG` (one record
 per sample); the site report lists chr1 positions 1, 2 and 3, each with four
 called samples. The two backends should produce the same files.
 
+Lifecycle/status messages and conversion success summaries go to stderr, not
+stdout (the conversion summary destination intentionally changed). Inspection's
+diagnostic stdout retains existing labels unchanged. Use `--quiet` to suppress informational
+stderr while preserving warnings/errors, or `--verbose` for extra configuration
+and missing-call diagnostics; these flags conflict. `-v` still prints version.
+For example, capture inspection with `--inspect --quiet > inspection.txt`, or
+save a conversion log with `2> run.log`. Successful conversion summaries list
+record filtering totals, persisted output paths, matrix payload (not peak RSS),
+and elapsed wall time; failed runs never print successful completion.
+
 Four bytes is intentionally tiny to exercise tile boundaries, not a recommended
 production budget. It bounds the cell buffer only, not RSS. See the README's
 resource contract and [benchmarking](benchmarking.md) before sizing large jobs.
