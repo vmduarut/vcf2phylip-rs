@@ -1,10 +1,10 @@
 //! Reusable conversion with streamed provenance and selectable matrix storage.
 use crate::{
-    cli::{Cli, ValidatedConfig},
+    cli::Cli,
     filter::{ProcessingConfig, Stats},
     matrix::{Alignment, Matrix},
     output::{self, Staged},
-    reader::VariantReader,
+    reader::{Format, VariantReader},
     storage::{Storage, StorageMode},
     writers,
 };
@@ -18,6 +18,10 @@ use std::{
 pub struct ConversionReport {
     pub stats: Stats,
     pub samples: usize,
+    pub minimum_samples: usize,
+    pub input_format: Format,
+    pub input_compressed: bool,
+    pub warnings: Vec<String>,
     pub matrix_bytes: usize,
     pub outputs: Vec<PathBuf>,
     pub storage: StorageMode,
@@ -89,28 +93,15 @@ fn collect_into(
 
 /// Convert with opt-in output replacement. No final output is published before EOF
 /// validation and all writes/flushes succeed. Finalization is per-file atomic.
+/// Never prints; warnings and input metadata are returned on success without
+/// reopening the input. On failure only the error is returned, not warnings.
 pub fn convert(cli: &Cli) -> Result<ConversionReport> {
-    convert_with_observer(cli, |_, config| {
-        for warning in &config.warnings {
-            eprintln!("warning: {warning}");
-        }
-    })
-}
-
-/// Convert with a header observer, called once after sample validation and before
-/// matrix allocation or record processing. The observer owns warning reporting;
-/// this entry point never prints. It reuses the actual reader, without rescanning.
-pub fn convert_with_observer(
-    cli: &Cli,
-    mut on_header: impl FnMut(&VariantReader, &ValidatedConfig),
-) -> Result<ConversionReport> {
     cli.validate_mode()?;
     ensure!(!cli.inspect, "convert cannot be used with --inspect");
     let prefix = output::prefix(&cli.input, cli.output_prefix.as_deref())?;
     let mut reader = VariantReader::open(&cli.input)?;
     let samples: Vec<_> = reader.header().sample_names().iter().cloned().collect();
     let config = cli.validate_samples(&samples)?;
-    on_header(&reader, &config);
     // Validate every identifier before any output directory or temporary file.
     Matrix::new(samples.clone())?;
     let matrix = Storage::new(
@@ -169,6 +160,10 @@ pub fn convert_with_observer(
     Ok(ConversionReport {
         stats,
         samples: samples.len(),
+        minimum_samples: config.minimum_samples,
+        input_format: reader.format(),
+        input_compressed: reader.is_compressed(),
+        warnings: config.warnings,
         matrix_bytes: matrix
             .sites()
             .checked_mul(samples.len())

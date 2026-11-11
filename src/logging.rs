@@ -1,12 +1,7 @@
 //! Small CLI-only stderr reporter. Inspection's stdout is deliberately separate.
 use std::{fmt::Display, time::Instant};
 
-use vcf2phylip_rs::{
-    cli::{Cli, ValidatedConfig},
-    conversion::ConversionReport,
-    filter::Stats,
-    reader::VariantReader,
-};
+use vcf2phylip_rs::{cli::Cli, conversion::ConversionReport, filter::Stats, reader::Format};
 
 /// Escape terminal controls in untrusted diagnostic text, without changing names
 /// used for filesystem access or scientific output.
@@ -105,14 +100,21 @@ impl Reporter {
         ));
     }
 
-    pub fn header(&self, reader: &VariantReader, config: &ValidatedConfig, cli: &Cli) {
-        for warning in &config.warnings {
+    pub fn warnings(&self, warnings: &[String]) {
+        for warning in warnings {
             eprintln!("warning: {}", safe(warning));
         }
-        self.info(format_args!(
-            "Number of samples in input: {}",
-            reader.header().sample_names().len()
-        ));
+    }
+
+    pub fn header(
+        &self,
+        samples: usize,
+        minimum_samples: usize,
+        format: Format,
+        compressed: bool,
+        cli: &Cli,
+    ) {
+        self.info(format_args!("Number of samples in input: {}", samples));
         self.info(format_args!(
             "Configured absolute minimum called samples: {}",
             cli.min_samples_locus
@@ -124,13 +126,10 @@ impl Reporter {
         ));
         self.info(format_args!(
             "Minimum called samples per locus: {} (effective)",
-            config.minimum_samples
+            minimum_samples
         ));
-        self.info(format_args!("Input format: {:?}", reader.format()));
-        self.info(format_args!(
-            "Input gzip/BGZF compressed: {}",
-            reader.is_compressed()
-        ));
+        self.info(format_args!("Input format: {format:?}"));
+        self.info(format_args!("Input gzip/BGZF compressed: {}", compressed));
         if self.verbose {
             self.info("Configuration:");
             self.info(format_args!("Storage: {:?}", cli.storage));
@@ -146,10 +145,7 @@ impl Reporter {
                 cli.partial_missing
             ));
             self.info(format_args!("Random seed: {:?}", cli.seed));
-            self.info(format_args!(
-                "Number of outgroups: {}",
-                config.outgroup_indices.len()
-            ));
+            self.info(format_args!("Number of outgroups: {}", cli.outgroup.len()));
         }
     }
 
@@ -172,7 +168,16 @@ impl Reporter {
         }
     }
 
-    pub fn converted(&self, report: &ConversionReport) {
+    pub fn converted(&self, report: &ConversionReport, cli: &Cli) {
+        self.warnings(&report.warnings);
+        self.start(cli);
+        self.header(
+            report.samples,
+            report.minimum_samples,
+            report.input_format,
+            report.input_compressed,
+            cli,
+        );
         self.stats(&report.stats);
         self.info(format_args!(
             "Matrix payload: {} bytes ({:?}, not peak RSS)",

@@ -42,18 +42,15 @@ fn run(args: Args) -> Result<()> {
     let cli = args.cli;
     cli.validate_mode()?;
     let log = logging::Reporter::new(args.quiet, args.verbose);
-    log.start(&cli);
     if !cli.inspect {
-        let report = vcf2phylip_rs::conversion::convert_with_observer(&cli, |reader, config| {
-            log.header(reader, config, &cli);
-        })?;
-        log.converted(&report);
+        let report = vcf2phylip_rs::conversion::convert(&cli)?;
+        log.converted(&report, &cli);
         return Ok(());
     }
     let mut reader = VariantReader::open(&cli.input)?;
     let samples: Vec<_> = reader.header().sample_names().iter().cloned().collect();
     let config = cli.validate_samples(&samples)?;
-    log.header(&reader, &config, &cli);
+    log.warnings(&config.warnings);
     let mut missing_gt = 0_u64;
     let mut stats = Stats::default();
     while let Some(variant) = reader.next_variant()? {
@@ -104,6 +101,14 @@ fn run(args: Args) -> Result<()> {
     println!(
         "Nucleotide partial policy: {:?}; random seed: {:?}",
         cli.partial_missing, cli.seed
+    );
+    log.start(&cli);
+    log.header(
+        samples.len(),
+        config.minimum_samples,
+        reader.format(),
+        reader.is_compressed(),
+        &cli,
     );
     log.inspected(&stats);
     Ok(())

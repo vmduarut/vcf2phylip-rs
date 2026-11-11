@@ -100,7 +100,7 @@ transitively, and tempfile brings randomness dependencies for staging filenames.
 
 ### Logging and reports
 
-Lifecycle messages go to **stderr**: input start, actual header sample count and
+Final summaries go to **stderr**, only after success: input path, actual header sample count and
 configured absolute minimum, call rate/percentage and effective required sample
 count, then successful filter totals, persisted output paths and
 elapsed wall time. Conversion summaries previously went to stdout; this is an
@@ -255,10 +255,12 @@ remain separate. `genotype` exposes call types/policies and single-call function
 `conversion::convert(&Cli)` runs the staged conversion (no-clobber unless `Cli::force`) and returns
 statistics/output paths; `conversion::collect` builds a `matrix::Matrix` from a
 reader and processing config, optionally streaming a site report to `Write`.
-`convert` retains its warning-only stderr behavior. `convert_with_observer`
-instead calls a header/config callback once, before record processing; that
-entry point never prints and the caller owns warning reporting. Neither library
-entry point prints informational lifecycle messages.
+`convert` never prints and has no observer/callback API. Its `ConversionReport`
+includes sample count, input format/compression, effective minimum and warnings
+captured during conversion, without reopening the input. Callers own warning
+reporting. The CLI prints each returned warning once, including in quiet mode,
+then its final summary only after successful conversion. Failed conversions
+return only the error, so configuration warnings are not reported on failure.
 `writers::{fasta,phylip}::write` accept generic `Write`, a matrix and a sample
 index permutation, and propagate buffered write/flush failures.
 Both writers now accept any `matrix::Alignment` (existing `&Matrix` calls remain

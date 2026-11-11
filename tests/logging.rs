@@ -1,7 +1,7 @@
 use std::{fs, process::Command};
 
 use clap::Parser;
-use vcf2phylip_rs::{cli::Cli, conversion::convert_with_observer};
+use vcf2phylip_rs::{cli::Cli, conversion::convert, reader::Format};
 
 const HEADER: &str = "##fileformat=VCFv4.3\n##contig=<ID=chr1,length=100>\n##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\n";
 
@@ -79,8 +79,8 @@ fn conversion_levels_streams_and_accurate_partition() {
                 body,
                 format!(
                     concat!(
-                        "Converting file 'input.vcf':\n",
                         "warning: minimum samples capped from 4 to 2 (input sample count)\n",
+                        "Converting file 'input.vcf':\n",
                         "Number of samples in input: 2\n",
                         "Configured absolute minimum called samples: 4\nMinimum call rate: 0.9 (90.00%)\n",
                         "Minimum called samples per locus: 2 (effective)\n",
@@ -108,7 +108,10 @@ fn conversion_levels_streams_and_accurate_partition() {
         assert!(error.contains("existing output"));
         assert!(!error.contains("Done."));
         assert!(!error.contains("saved to"));
-        assert_eq!(error.matches("warning:").count(), 1);
+        assert_eq!(error.matches("warning:").count(), 0);
+        assert!(!error.contains("Converting file"));
+        assert!(!error.contains("Number of samples"));
+        assert!(!error.contains("Configuration:"));
     }
 }
 
@@ -188,13 +191,18 @@ fn conflicts_and_errors_never_claim_success_or_paths() {
             assert!(stderr.contains("Error:"));
             assert!(!stderr.contains("Done."));
             assert!(!stderr.contains("saved to"));
+            assert!(!stderr.contains("Converting file"));
+            assert!(!stderr.contains("Number of samples"));
+            assert!(!stderr.contains("Configuration:"));
+            assert!(!stderr.contains("elapsed time"));
+            assert!(!stderr.contains("warning:"));
             assert!(!dir.path().join("input.min2.phy").exists());
         }
     }
 }
 
 #[test]
-fn observer_reuses_header_once_and_stats_partition_records() {
+fn conversion_report_captures_input_threshold_warnings_and_partition() {
     let dir = tempfile::tempdir().unwrap();
     let input = dir.path().join("input.vcf");
     fs::write(&input, fixture()).unwrap();
@@ -204,17 +212,19 @@ fn observer_reuses_header_once_and_stats_partition_records() {
         input.to_str().unwrap(),
         "--output-folder",
         dir.path().to_str().unwrap(),
+        "-m",
+        "4",
     ])
     .unwrap();
-    let mut calls = 0;
-    let report = convert_with_observer(&cli, |reader, config| {
-        calls += 1;
-        assert_eq!(reader.records_read(), 0);
-        assert_eq!(reader.header().sample_names().len(), 2);
-        assert!(config.warnings.is_empty());
-    })
-    .unwrap();
-    assert_eq!(calls, 1);
+    let report = convert(&cli).unwrap();
+    assert_eq!(report.samples, 2);
+    assert_eq!(report.minimum_samples, 2);
+    assert_eq!(report.input_format, Format::Vcf);
+    assert!(!report.input_compressed);
+    assert_eq!(
+        report.warnings,
+        ["minimum samples capped from 4 to 2 (input sample count)"]
+    );
     let stats = report.stats;
     assert_eq!(stats.nucleotide_below_minimum(), 2);
     assert_eq!(stats.nucleotide_missing_calls, 3);
