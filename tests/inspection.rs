@@ -460,7 +460,7 @@ fn config_validates_names_thresholds_and_reserved_flags() {
     for n in ["0", "-1", "no", "184467440737095516160"] {
         assert!(Cli::try_parse_from(["app", "-i", "x", "--inspect", "-m", n]).is_err());
     }
-    for flag in ["-p", "-f", "-n", "-b", "-r", "-w", "--resolve-IUPAC"] {
+    for flag in ["-p", "-f", "-r", "-w", "--resolve-IUPAC"] {
         let cli = Cli::try_parse_from(["app", "-i", "x", "--inspect", flag]).unwrap();
         assert!(cli.validate_mode().is_err());
     }
@@ -840,8 +840,6 @@ fn conversion_failures_leave_no_final_outputs() {
             vec![],
         ),
         (one("0/1"), vec![]), // whitespace identifier: inspect permits it, conversion does not
-        (data("S", ""), vec!["-n"]),
-        (data("S", ""), vec!["-b"]),
         (data("S", ""), vec!["-p"]),
         (data("S", ""), vec!["-o", "unknown"]),
         (data("S", ""), vec!["--output-prefix", "../escape"]),

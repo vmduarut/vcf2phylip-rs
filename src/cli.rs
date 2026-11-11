@@ -47,12 +47,6 @@ pub struct Cli {
     /// Also write FASTA (80 columns per sequence line).
     #[arg(short = 'f', long)]
     pub fasta: bool,
-    /// Reserved for Milestone 4 (not yet supported).
-    #[arg(short = 'n', long)]
-    pub nexus: bool,
-    /// Reserved for Milestone 4 (not yet supported).
-    #[arg(short = 'b', long)]
-    pub nexus_binary: bool,
     /// Resolve nucleotide calls by sampling allele copies; requires --seed.
     #[arg(short = 'r', long = "resolve-IUPAC")]
     pub resolve_iupac: bool,
@@ -71,8 +65,6 @@ pub struct Cli {
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
-    #[error("NEXUS and binary NEXUS output are not implemented (Milestone 4)")]
-    NexusUnsupported,
     #[error("no alignment output selected; use --fasta with --phylip-disable")]
     NoOutputs,
     #[error("conversion/output flags cannot be used with --inspect")]
@@ -134,9 +126,6 @@ impl Cli {
         {
             return Err(ConfigError::StorageOptions);
         }
-        if self.nexus || self.nexus_binary {
-            return Err(ConfigError::NexusUnsupported);
-        }
         if self.inspect
             && (self.storage != StorageMode::Memory
                 || self.memory_limit.is_some()
@@ -145,8 +134,6 @@ impl Cli {
                 || self.output_prefix.is_some()
                 || self.phylip_disable
                 || self.fasta
-                || self.nexus
-                || self.nexus_binary
                 || self.write_used_sites)
         {
             return Err(ConfigError::OutputUnsupported);

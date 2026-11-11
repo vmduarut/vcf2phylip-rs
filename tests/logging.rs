@@ -243,8 +243,6 @@ fn public_struct_literals_remain_compatible() {
         output_prefix: None,
         phylip_disable: false,
         fasta: false,
-        nexus: false,
-        nexus_binary: false,
         resolve_iupac: false,
         seed: None,
         partial_missing: PartialMissingPolicy::Missing,
