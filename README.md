@@ -23,7 +23,7 @@ From the repository root, with Rust/Cargo 1.99.0 or later and a native linker:
 cargo install --path . --locked
 out=$(mktemp -d)
 vcf2phylip-rs -i examples/example.vcf --inspect
-vcf2phylip-rs -i examples/example.vcf -m 4 --min-call-rate 0 -f -w --output-folder "$out"
+vcf2phylip-rs -i examples/example.vcf -m 4 -f -w --output-folder "$out"
 ```
 
 Ensure Cargo's bin directory is on your PATH. The conversion writes
@@ -82,15 +82,17 @@ transitively, and tempfile brings randomness dependencies for staging filenames.
   invalid FORMAT layout or damaged compressed input. No unsafe skip mode.
   Errors include record ordinal/successful count and contig/position when
   available. Success counts are printed only after the stream is drained.
-- `-m/--min-samples-locus` is the absolute called-sample minimum (default **1**),
+- `-m/--min-samples-locus` is an optional absolute called-sample minimum,
   capped to the input sample count with a warning; zero/negative values fail.
   `--min-call-rate` defaults to **0.9 (90%)**, accepting finite values in [0,1].
-  The effective minimum is `max(capped -m, ceil(rate × input sample count))`.
-  Both conditions apply independently to nucleotide-called and binary-encodable
-  sample counts, using all actual header samples (including outgroups).
-  **Intentional change from upstream/count-only filtering:** `-m 2` alone still
-  requires 90%; use `-m 2 --min-call-rate 0` for upstream-style count-only filtering,
-  or `-m 4 --min-call-rate 0` to reproduce the previous default.
+  **Choose one policy: explicit `-m` and explicit `--min-call-rate` cannot be
+  combined**, even if the supplied rate is 0.9. `-m 1` alone requires only one
+  called sample and `-m 2` requires two; the implicit default rate does not apply.
+  Without `-m`, the effective minimum is
+  `max(1, ceil(rate × input sample count))`, using all header samples (including
+  outgroups). The effective count applies independently to nucleotide-called and
+  binary-encodable sample counts. `-m 4` reproduces the previous count-only default.
+  Neither option supplied means rate-based filtering at 0.9.
 - `-o/--outgroup` requires an exact name; repeat it for multiple names, in
   requested order. Unknown or duplicate requests are errors. No comma/semicolon
   splitting, renaming, or actual sample reordering occurs during inspection.
@@ -101,11 +103,11 @@ transitively, and tempfile brings randomness dependencies for staging filenames.
 ### Logging and reports
 
 Final summaries go to **stderr**, only after success: input path, actual header sample count and
-configured absolute minimum, call rate/percentage and effective required sample
+the active threshold policy (absolute minimum or call rate/percentage) and effective required sample
 count, then successful filter totals, persisted output paths and
 elapsed wall time. Conversion summaries previously went to stdout; this is an
 intentional destination change. Conversion stdout is now empty; inspection's
-existing diagnostic stdout labels remain, with additive configured minimum/rate
+existing diagnostic stdout labels remain, with the active configured minimum/rate
 lines and an effective-threshold annotation.
 
 `--quiet` suppresses informational messages, never warnings or errors. `--verbose`
@@ -148,7 +150,8 @@ and the called-sample count under the selected partial policy.
 
 Outputs default to the current directory, or `--output-folder` (created if
 missing). Names are `<prefix>.min<N>.phy`, `.fasta`, `.used_sites.tsv`, with
-effective combined minimum N (not just the requested `-m`). The default prefix is the input basename with a
+effective minimum N (after capping an explicit `-m`, or deriving it from the rate).
+The default prefix is the input basename with a
 terminal `.vcf`/`.bcf` and optional `.gz`/`.bgz`/`.bgzf` removed case-insensitively;
 arbitrary middle `.vcf` substrings remain. Explicit prefixes must be nonempty
 basenames, not `.`/`..`, absolute paths or slash/backslash-containing paths.
@@ -243,9 +246,13 @@ interpret a subsequent `None` as successful validation.
 `filter::ProcessingConfig::new` is a low-level count-only constructor validating
 sample dimensions, positive minimum (legacy `None` default 4, capped), partial
 policy and allele resolution. CLI inspection/conversion instead use
-`Cli::validate_samples` to compute the combined threshold once and pass it
-explicitly to this constructor. `Cli` struct literals now require
-`min_call_rate: f64` (normally `0.9`). `ProcessingConfig::process`
+`Cli::validate_samples` to compute the active threshold once and pass it
+explicitly to this constructor. Public `Cli::min_samples_locus` is now
+`Option<usize>`: use `Some(n)` for count-only filtering, with `min_call_rate: None`.
+`Cli::min_call_rate` is now `Option<f64>`: use `Some(rate)` for an explicit rate,
+with `min_samples_locus: None`. Both `None` select the default 0.9 rate; both
+`Some` fail public validation, just as supplying both flags fails CLI parsing.
+`ProcessingConfig::process`
 returns a `ProcessedLocus` with nucleotide calls, optional binary calls,
 independent called counts and acceptance booleans. It never accumulates a matrix.
 `filter::Stats::observe` accumulates diagnostic counts; absent-GT diagnostics
@@ -273,9 +280,12 @@ shares the same filter/collection loop for both backends.
 ## Scientific contract
 
 The default requires at least 90% of input samples called at each retained locus:
-three samples require three calls; `--min-call-rate 0.66` requires two. A stronger
-absolute `-m` still wins, `--min-call-rate 0` disables only the rate condition,
-and `--min-call-rate 1` requires every sample. Rates parse as finite `f64`; the
+three samples require three calls; `--min-call-rate 0.66` requires two. Alternatively,
+`-m 1` selects count-only filtering and retains an otherwise eligible locus with
+at least one called sample. Explicit count and rate options are mutually exclusive.
+Without `-m`, rate 0
+still requires one call and rate 1 requires every sample. Rates parse as finite
+`f64`; the
 threshold calculation uses integer arithmetic on its canonical shortest decimal
 representation, avoiding binary multiplication/ceil artifacts such as
 `0.07 × 100` spuriously requiring eight rather than seven calls. Nucleotide and

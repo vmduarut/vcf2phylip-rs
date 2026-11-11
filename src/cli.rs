@@ -9,6 +9,9 @@ use crate::{
 use clap::{ArgAction, Parser};
 use thiserror::Error;
 
+/// Call-rate policy used when neither threshold option is supplied.
+pub const DEFAULT_CALL_RATE: f64 = 0.9;
+
 #[derive(Debug, Parser)]
 #[command(
     version,
@@ -31,17 +34,16 @@ pub struct Cli {
     #[arg(long)]
     pub temp_dir: Option<PathBuf>,
     /// Absolute minimum called samples per locus (capped to input sample count).
-    /// Both this minimum and --min-call-rate must be met; -m alone does not
-    /// disable the default 90% requirement. Use --min-call-rate 0 for upstream
-    /// count-only filtering.
-    #[arg(short = 'm', long, default_value = "1", value_parser = positive_usize)]
-    pub min_samples_locus: usize,
+    /// Count-only filtering; cannot be combined with --min-call-rate.
+    #[arg(short = 'm', long, value_parser = positive_usize, conflicts_with = "min_call_rate")]
+    pub min_samples_locus: Option<usize>,
     /// Minimum fraction of all input samples called per locus (finite 0..=1).
     /// Requires ceil(rate * input samples), independently for nucleotide and
-    /// diagnostic binary calls. The effective minimum is the greater of this
-    /// requirement and -m/--min-samples-locus.
-    #[arg(long, default_value = "0.9", value_parser = parse_call_rate)]
-    pub min_call_rate: f64,
+    /// diagnostic binary calls, with at least one called sample required.
+    /// Defaults to 0.9 (90%) when neither threshold option is supplied.
+    /// Cannot be combined with -m/--min-samples-locus.
+    #[arg(long, value_parser = parse_call_rate)]
+    pub min_call_rate: Option<f64>,
     /// Exact sample name; repeat for multiple outgroups (no delimiter splitting).
     #[arg(short, long)]
     pub outgroup: Vec<String>,
@@ -86,6 +88,10 @@ pub enum ConfigError {
     InvalidMinimum,
     #[error("minimum call rate must be finite and between 0 and 1 inclusive")]
     InvalidCallRate,
+    #[error(
+        "--min-samples-locus and --min-call-rate cannot be used together; select one threshold policy"
+    )]
+    ConflictingThresholds,
     #[error("outgroup is not an exact input sample name: {0:?}")]
     UnknownOutgroup(String),
     #[error("outgroup specified more than once: {0:?}")]
@@ -188,11 +194,17 @@ impl Cli {
         if !self.inspect && self.phylip_disable && !self.fasta {
             return Err(ConfigError::NoOutputs);
         }
-        if self.min_samples_locus == 0 {
+        if self.min_samples_locus == Some(0) {
             return Err(ConfigError::InvalidMinimum);
         }
-        if !self.min_call_rate.is_finite() || !(0.0..=1.0).contains(&self.min_call_rate) {
+        if self
+            .min_call_rate
+            .is_some_and(|rate| !rate.is_finite() || !(0.0..=1.0).contains(&rate))
+        {
             return Err(ConfigError::InvalidCallRate);
+        }
+        if self.min_samples_locus.is_some() && self.min_call_rate.is_some() {
+            return Err(ConfigError::ConflictingThresholds);
         }
         if self.resolve_iupac != self.seed.is_some() {
             return Err(ConfigError::InvalidSeed);
@@ -218,16 +230,23 @@ impl Cli {
                     .ok_or_else(|| ConfigError::UnknownOutgroup(name.clone()))?,
             );
         }
-        let absolute_minimum = self.min_samples_locus.min(samples.len());
-        let warnings = if absolute_minimum != self.min_samples_locus {
-            vec![format!(
-                "minimum samples capped from {} to {absolute_minimum} (input sample count)",
-                self.min_samples_locus
-            )]
-        } else {
-            Vec::new()
+        let mut warnings = Vec::new();
+        let minimum_samples = match self.min_samples_locus {
+            Some(requested) => {
+                let minimum = requested.min(samples.len());
+                if minimum != requested {
+                    warnings.push(format!(
+                        "minimum samples capped from {requested} to {minimum} (input sample count)"
+                    ));
+                }
+                minimum
+            }
+            None => rate_minimum(
+                self.min_call_rate.unwrap_or(DEFAULT_CALL_RATE),
+                samples.len(),
+            )
+            .max(1),
         };
-        let minimum_samples = absolute_minimum.max(rate_minimum(self.min_call_rate, samples.len()));
         Ok(ValidatedConfig {
             minimum_samples,
             outgroup_indices,

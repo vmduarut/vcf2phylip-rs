@@ -78,7 +78,7 @@ fn collect_into(
     }
     ensure!(
         matrix.sites() > 0,
-        "no nucleotide loci retained; check SNP eligibility, missing calls, --min-samples-locus and --min-call-rate"
+        "no nucleotide loci retained; check SNP eligibility, missing calls, and the selected --min-samples-locus or --min-call-rate threshold"
     );
     ensure!(
         u64::try_from(matrix.sites())? == stats.nucleotide_accepted,

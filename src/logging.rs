@@ -1,7 +1,12 @@
 //! Small CLI-only stderr reporter. Inspection's stdout is deliberately separate.
 use std::{fmt::Display, time::Instant};
 
-use vcf2phylip_rs::{cli::Cli, conversion::ConversionReport, filter::Stats, reader::Format};
+use vcf2phylip_rs::{
+    cli::{Cli, DEFAULT_CALL_RATE},
+    conversion::ConversionReport,
+    filter::Stats,
+    reader::Format,
+};
 
 /// Escape terminal controls in untrusted diagnostic text, without changing names
 /// used for filesystem access or scientific output.
@@ -115,15 +120,17 @@ impl Reporter {
         cli: &Cli,
     ) {
         self.info(format_args!("Number of samples in input: {}", samples));
-        self.info(format_args!(
-            "Configured absolute minimum called samples: {}",
-            cli.min_samples_locus
-        ));
-        self.info(format_args!(
-            "Minimum call rate: {} ({:.2}%)",
-            cli.min_call_rate,
-            cli.min_call_rate * 100.0
-        ));
+        if let Some(minimum) = cli.min_samples_locus {
+            self.info(format_args!(
+                "Configured absolute minimum called samples: {minimum}"
+            ));
+        } else {
+            let rate = cli.min_call_rate.unwrap_or(DEFAULT_CALL_RATE);
+            self.info(format_args!(
+                "Minimum call rate: {rate} ({:.2}%)",
+                rate * 100.0
+            ));
+        }
         self.info(format_args!(
             "Minimum called samples per locus: {} (effective)",
             minimum_samples

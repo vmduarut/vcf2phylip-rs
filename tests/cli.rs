@@ -26,19 +26,21 @@ fn nexus_options_are_unknown() {
 #[test]
 fn threshold_defaults_and_help_preserve_upstream_absolute_name() {
     let cli = Cli::try_parse_from(["app", "-i", "x"]).unwrap();
-    assert_eq!(cli.min_samples_locus, 1);
-    assert_eq!(cli.min_call_rate, 0.9);
+    assert_eq!(cli.min_samples_locus, None);
+    assert_eq!(cli.min_call_rate, None);
     let help = Cli::command().render_long_help().to_string();
     for text in [
         "--min-samples-locus",
         "--min-call-rate",
-        "[default: 1]",
-        "[default: 0.9]",
-        "Both this minimum and --min-call-rate must be met",
-        "--min-call-rate 0",
+        "Defaults to 0.9 (90%) when neither threshold option is supplied",
+        "cannot be combined with --min-call-rate",
+        "Cannot be combined with -m/--min-samples-locus",
         "ceil(rate * input samples)",
     ] {
         assert!(help.contains(text), "{help}");
     }
     assert!(!help.contains("--min-called-samples"));
+    assert!(!help.contains("[default: 1]"));
+    let cli = Cli::try_parse_from(["app", "-i", "x", "--min-samples-locus", "1"]).unwrap();
+    assert_eq!(cli.min_samples_locus, Some(1));
 }

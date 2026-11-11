@@ -16,8 +16,6 @@ fn documented_example_matches_hand_computed_outputs_in_both_backends() {
                 storage,
                 "-m",
                 "4",
-                "--min-call-rate",
-                "0",
                 "-f",
                 "-w",
                 "--output-folder",

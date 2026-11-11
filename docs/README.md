@@ -8,9 +8,9 @@
   differences from upstream and deferred formats.
 - [Scientific contract](../README.md#scientific-contract) and
   [output safety and resource limits](../README.md#conversion-and-output-safety):
-  interpretation, combined absolute/call-rate filtering (90% by default), storage
-  and opt-in output replacement behavior. `-m` retains its upstream name; use
-  `--min-call-rate 0` with it for count-only filtering.
+  interpretation, call-rate filtering (90% by default), storage
+  and opt-in output replacement behavior. `-m` retains its upstream name and
+  selects count-only filtering; explicit count and rate options are mutually exclusive.
 - [Benchmarking](benchmarking.md): opt-in local measurements and their limits;
   it does not establish a published speedup.
 

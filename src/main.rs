@@ -1,7 +1,10 @@
 use anyhow::Result;
 use clap::Parser;
 use vcf2phylip_rs::filter::Stats;
-use vcf2phylip_rs::{cli::Cli, reader::VariantReader};
+use vcf2phylip_rs::{
+    cli::{Cli, DEFAULT_CALL_RATE},
+    reader::VariantReader,
+};
 
 mod logging;
 
@@ -72,15 +75,12 @@ fn run(args: Args) -> Result<()> {
         samples.len(),
         reader.records_read()
     );
-    println!(
-        "Configured absolute minimum called samples: {}",
-        cli.min_samples_locus
-    );
-    println!(
-        "Minimum call rate: {} ({:.2}%)",
-        cli.min_call_rate,
-        cli.min_call_rate * 100.0
-    );
+    if let Some(minimum) = cli.min_samples_locus {
+        println!("Configured absolute minimum called samples: {minimum}");
+    } else {
+        let rate = cli.min_call_rate.unwrap_or(DEFAULT_CALL_RATE);
+        println!("Minimum call rate: {rate} ({:.2}%)", rate * 100.0);
+    }
     println!(
         "Minimum called samples: {} (effective; applied independently to nucleotide and binary loci)",
         config.minimum_samples

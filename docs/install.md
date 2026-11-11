@@ -37,9 +37,9 @@ Run from the repository root; `mktemp` avoids output-name collisions:
 
 ```sh
 out=$(mktemp -d)
-cargo run --locked -- -i examples/example.vcf --inspect -m 4 --min-call-rate 0
-cargo run --locked -- -i examples/example.vcf -m 4 --min-call-rate 0 -f -w --output-folder "$out/memory"
-cargo run --locked -- -i examples/example.vcf -m 4 --min-call-rate 0 -f -w --storage disk \
+cargo run --locked -- -i examples/example.vcf --inspect -m 4
+cargo run --locked -- -i examples/example.vcf -m 4 -f -w --output-folder "$out/memory"
+cargo run --locked -- -i examples/example.vcf -m 4 -f -w --storage disk \
   --memory-limit 4B --temp-dir "$out" --output-folder "$out/disk"
 for backend in memory disk; do
   diff examples/expected.phy "$out/$backend/example.min4.phy"
@@ -58,7 +58,7 @@ called samples. The two backends should produce the same files.
 
 Lifecycle/status messages and conversion success summaries go to stderr, not
 stdout (the conversion summary destination intentionally changed). Inspection's
-diagnostic stdout retains existing labels with additive configured minimum/rate
+diagnostic stdout retains existing labels with the active configured minimum/rate
 lines and an effective-threshold annotation. Use `--quiet` to suppress informational
 stderr while preserving warnings/errors, or `--verbose` for extra configuration
 and missing-call diagnostics; these flags conflict. `-v` still prints version.
@@ -74,7 +74,7 @@ Outputs are refused by default; use a new directory/prefix, or explicitly rerun
 with `--force` to replace only selected regular output files:
 
 ```sh
-cargo run --locked -- -i examples/example.vcf -m 4 --min-call-rate 0 -f -w --output-folder "$out/memory" --force
+cargo run --locked -- -i examples/example.vcf -m 4 -f -w --output-folder "$out/memory" --force
 ```
 
 Existing outputs survive input/validation/staged-writing errors. Publication is
@@ -104,15 +104,18 @@ algorithm, not upstream Python RNG equivalence. Refer to the README and
 
 ## Interpreting an alignment
 
-`-m/--min-samples-locus` keeps its upstream name but now defaults to 1.
+`-m/--min-samples-locus` keeps its upstream name and is optional.
 `--min-call-rate` defaults to 0.9 (90%), accepting finite values in [0,1].
-Both conditions must hold: the effective minimum is the larger of `-m` (capped
-to input sample count with a warning) and `ceil(rate × actual input samples)`.
+Explicit `-m` and explicit `--min-call-rate` are mutually exclusive, even when
+the rate is 0.9. Choose one; supplying both is an error in either order.
+`-m` alone selects count-only filtering without the implicit default rate. The
+count is capped to input sample count with a warning. Without `-m`, the effective
+minimum is `max(1, ceil(rate × actual input samples))`.
 Three samples therefore require three calls by default, or two with
-`--min-call-rate 0.66`. **`-m 2` alone does not disable the default 90% condition.**
-Use `-m 2 --min-call-rate 0` for upstream-style count-only filtering;
-`-m 4 --min-call-rate 0` restores this project's previous default. Rate 1
-requires all samples. Inspection, memory and disk conversion share the same
+`--min-call-rate 0.66`. `-m 1` alone requires one call;
+`-m 2` requires two. `-m 4` restores this project's previous count-only default.
+Without `-m`, rate 1 requires all samples and rate 0 still requires one call.
+Reports show only the active policy. Inspection, memory and disk conversion share the same
 threshold, reflected in the output `.min<N>` suffix and reports.
 
 IUPAC symbols encode the set of known bases, not phase or allele dosage: both

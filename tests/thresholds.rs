@@ -1,7 +1,10 @@
 use std::{fs, process::Command};
 
-use clap::Parser;
-use vcf2phylip_rs::{cli::Cli, conversion::convert};
+use clap::{Parser, error::ErrorKind};
+use vcf2phylip_rs::{
+    cli::{Cli, ConfigError},
+    conversion::convert,
+};
 
 fn configured(samples: usize, flags: &[&str]) -> vcf2phylip_rs::cli::ValidatedConfig {
     let cli = Cli::try_parse_from(
@@ -17,13 +20,14 @@ fn configured(samples: usize, flags: &[&str]) -> vcf2phylip_rs::cli::ValidatedCo
 }
 
 #[test]
-fn effective_threshold_combines_rate_and_absolute_count() {
+fn selected_count_or_rate_determines_threshold() {
     for (samples, flags, expected) in [
         (3, vec![], 3),
-        (3, vec!["-m", "2"], 3), // Explicit -m does not disable the default rate.
+        (3, vec!["-m", "1"], 1),
+        (3, vec!["-m", "2"], 2),
+        (3, vec!["--min-samples-locus", "1"], 1),
         (3, vec!["--min-call-rate", "0.66"], 2),
-        (3, vec!["--min-call-rate", "0.66", "-m", "3"], 3),
-        (3, vec!["--min-call-rate", "0", "-m", "2"], 2),
+        (3, vec!["--min-call-rate", "0.9"], 3),
         (3, vec!["--min-call-rate", "0"], 1),
         (3, vec!["--min-call-rate", "1"], 3),
         (100, vec!["--min-call-rate", "0.07"], 7),
@@ -46,6 +50,74 @@ fn effective_threshold_combines_rate_and_absolute_count() {
         ["minimum samples capped from 4 to 3 (input sample count)"]
     );
     assert!(configured(3, &[]).warnings.is_empty());
+    assert!(configured(3, &["-m", "1"]).warnings.is_empty());
+}
+
+#[test]
+fn explicit_threshold_options_conflict_in_both_orders_and_all_modes() {
+    let dir = tempfile::tempdir().unwrap();
+    for mode in [
+        vec!["--inspect"],
+        vec!["--storage", "memory"],
+        vec!["--storage", "disk"],
+    ] {
+        for count in ["-m", "--min-samples-locus"] {
+            for rate in ["0", "0.9", "1"] {
+                for flags in [
+                    vec![count, "1", "--min-call-rate", rate],
+                    vec!["--min-call-rate", rate, count, "1"],
+                ] {
+                    let error = Cli::try_parse_from(
+                        ["app", "-i", "missing.vcf"]
+                            .into_iter()
+                            .chain(mode.iter().copied())
+                            .chain(flags.iter().copied()),
+                    )
+                    .unwrap_err();
+                    assert_eq!(
+                        error.kind(),
+                        ErrorKind::ArgumentConflict,
+                        "{mode:?} {flags:?}"
+                    );
+                    let result = Command::new(env!("CARGO_BIN_EXE_vcf2phylip-rs"))
+                        .args(["-i", "missing.vcf"])
+                        .args(&mode)
+                        .args(&flags)
+                        .current_dir(dir.path())
+                        .output()
+                        .unwrap();
+                    assert_eq!(result.status.code(), Some(2));
+                    assert!(result.stdout.is_empty());
+                    let stderr = String::from_utf8(result.stderr).unwrap();
+                    assert!(stderr.contains("cannot be used with"), "{stderr}");
+                }
+            }
+        }
+        let mut cli = Cli::try_parse_from(
+            ["app", "-i", "missing.vcf"]
+                .into_iter()
+                .chain(mode.iter().copied()),
+        )
+        .unwrap();
+        for rate in [0.0, 0.9, 1.0] {
+            cli.min_samples_locus = Some(1);
+            cli.min_call_rate = Some(rate);
+            assert!(matches!(
+                cli.validate_mode(),
+                Err(ConfigError::ConflictingThresholds)
+            ));
+            assert!(matches!(
+                cli.validate_samples(&["A".to_owned()]),
+                Err(ConfigError::ConflictingThresholds)
+            ));
+            let error = convert(&cli).unwrap_err();
+            assert!(matches!(
+                error.downcast_ref::<ConfigError>(),
+                Some(ConfigError::ConflictingThresholds)
+            ));
+        }
+    }
+    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
 }
 
 #[test]
@@ -53,17 +125,49 @@ fn invalid_rates_rejected_by_parser_and_public_validation() {
     for rate in [
         "NaN", "inf", "-inf", "Infinity", "-0.01", "1.01", "1e309", "garbage",
     ] {
-        assert!(
-            Cli::try_parse_from(["app", "-i", "x", &format!("--min-call-rate={rate}")]).is_err(),
-            "{rate}"
-        );
+        for count_flags in [vec![], vec!["-m", "1"]] {
+            assert!(
+                Cli::try_parse_from(
+                    ["app", "-i", "x", &format!("--min-call-rate={rate}")]
+                        .into_iter()
+                        .chain(count_flags)
+                )
+                .is_err(),
+                "{rate}"
+            );
+        }
     }
     let mut cli = Cli::try_parse_from(["app", "-i", "x"]).unwrap();
     for rate in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.01, 1.01] {
-        cli.min_call_rate = rate;
+        cli.min_call_rate = Some(rate);
+        cli.min_samples_locus = None;
+        assert!(cli.validate_mode().is_err());
+        cli.min_samples_locus = Some(1);
         assert!(cli.validate_mode().is_err());
     }
+    cli.min_call_rate = None;
+    cli.min_samples_locus = None;
     assert!(cli.validate_samples(&[]).is_err());
+}
+
+#[test]
+fn invalid_counts_rejected_by_parser_and_public_validation() {
+    for count in [
+        "0",
+        "-1",
+        "1.5",
+        "garbage",
+        "999999999999999999999999999999999999999",
+    ] {
+        assert!(
+            Cli::try_parse_from(["app", "-i", "x", &format!("--min-samples-locus={count}")])
+                .is_err()
+        );
+    }
+    let mut cli = Cli::try_parse_from(["app", "-i", "x"]).unwrap();
+    cli.min_samples_locus = Some(0);
+    assert!(cli.validate_mode().is_err());
+    assert!(cli.validate_samples(&["A".to_owned()]).is_err());
 }
 
 #[test]
@@ -76,18 +180,19 @@ fn inspection_memory_disk_and_filenames_share_threshold_and_call_policy() {
         "chr1\t1\t.\tA\tC\t.\tPASS\t.\tGT\t0/0\t0/1\t1/1\n",
         "chr1\t2\t.\tA\tC\t.\tPASS\t.\tGT\t0/0\t0/1\t./.\n",
         "chr1\t3\t.\tA\tC\t.\tPASS\t.\tGT\t0/0\t0/.\t1\n",
+        "chr1\t4\t.\tA\tC\t.\tPASS\t.\tGT\t0/0\t./.\t./.\n",
+        "chr1\t5\t.\tA\tC\t.\tPASS\t.\tGT\t./.\t./.\t./.\n",
+        "chr1\t6\t.\tA\tAT\t.\tPASS\t.\tGT\t0/0\t./.\t./.\n",
     )).unwrap();
     for (flags, minimum, dna, binary, positions) in [
         (vec![], 3, 1, 1, vec![1]),
-        (vec!["-m", "2"], 3, 1, 1, vec![1]),
+        (vec!["-m", "1"], 1, 4, 4, vec![1, 2, 3, 4]),
+        (vec!["-m", "2"], 2, 3, 2, vec![1, 2, 3]),
+        (vec!["--min-samples-locus", "1"], 1, 4, 4, vec![1, 2, 3, 4]),
+        (vec!["--min-call-rate", "0.9"], 3, 1, 1, vec![1]),
+        (vec!["-m", "4"], 3, 1, 1, vec![1]),
+        (vec!["--min-call-rate", "0"], 1, 4, 4, vec![1, 2, 3, 4]),
         (vec!["--min-call-rate", "0.66"], 2, 3, 2, vec![1, 2, 3]),
-        (
-            vec!["--min-call-rate", "0", "-m", "2"],
-            2,
-            3,
-            2,
-            vec![1, 2, 3],
-        ),
         (
             vec![
                 "--min-call-rate",
@@ -159,6 +264,18 @@ fn inspection_memory_disk_and_filenames_share_threshold_and_call_policy() {
             .unwrap();
         assert!(result.status.success(), "{result:?}");
         let stdout = String::from_utf8(result.stdout).unwrap();
+        let count_policy = flags.contains(&"-m") || flags.contains(&"--min-samples-locus");
+        assert_eq!(
+            stdout.contains("Configured absolute minimum called samples:"),
+            count_policy,
+            "{stdout}"
+        );
+        assert_eq!(
+            stdout.contains("Minimum call rate:"),
+            !count_policy,
+            "{stdout}"
+        );
+        assert!(!stdout.contains("ignored"), "{stdout}");
         assert!(
             stdout.contains(&format!("Minimum called samples: {minimum} (effective")),
             "{stdout}"

@@ -82,7 +82,7 @@ fn conversion_levels_streams_and_accurate_partition() {
                         "warning: minimum samples capped from 4 to 2 (input sample count)\n",
                         "Converting file 'input.vcf':\n",
                         "Number of samples in input: 2\n",
-                        "Configured absolute minimum called samples: 4\nMinimum call rate: 0.9 (90.00%)\n",
+                        "Configured absolute minimum called samples: 4\n",
                         "Minimum called samples per locus: 2 (effective)\n",
                         "Input format: Vcf\nInput gzip/BGZF compressed: false\n",
                         "{}Total records processed: 7\n",
@@ -163,6 +163,42 @@ fn output_labels_match_selected_formats() {
 }
 
 #[test]
+fn final_summary_shows_only_the_active_threshold_policy() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("input.vcf"), fixture()).unwrap();
+    let output = run(dir.path(), &["-m", "1"]);
+    assert!(output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("Configured absolute minimum called samples: 1"));
+    assert!(!stderr.contains("Minimum call rate:"));
+    assert!(!stderr.contains("ignored"));
+    assert!(stderr.contains("Minimum called samples per locus: 1 (effective)"));
+    assert!(stderr.contains("SNP loci retained: 3"));
+    assert!(stderr.contains("input.min1.phy"));
+    assert!(output.stdout.is_empty());
+    for flags in [
+        vec![],
+        vec!["--min-call-rate", "0.9"],
+        vec!["--min-call-rate", "0"],
+    ] {
+        let mut flags = flags;
+        flags.push("--force");
+        let output = run(dir.path(), &flags);
+        assert!(output.status.success(), "{output:?}");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        let expected = if flags.contains(&"0") {
+            "Minimum call rate: 0 (0.00%)"
+        } else {
+            "Minimum call rate: 0.9 (90.00%)"
+        };
+        assert!(stderr.contains(expected), "{stderr}");
+        assert!(!stderr.contains("Configured absolute minimum called samples:"));
+        assert!(!stderr.contains("ignored"));
+        assert!(output.stdout.is_empty());
+    }
+}
+
+#[test]
 fn conflicts_and_errors_never_claim_success_or_paths() {
     let dir = tempfile::tempdir().unwrap();
     for flags in [vec!["--quiet", "--verbose"], vec!["--verbose", "--quiet"]] {
@@ -236,19 +272,19 @@ fn conversion_report_captures_input_threshold_warnings_and_partition() {
 }
 
 #[test]
-fn public_struct_literals_remain_compatible() {
+fn public_struct_literals_track_documented_configuration_shape() {
     use vcf2phylip_rs::{filter::Stats, genotype::PartialMissingPolicy, storage::StorageMode};
 
     // Deliberately no struct update syntax: track the public shape, including
-    // the new rate field; logging itself still adds no required library fields.
+    // the rate field and optional count; logging adds no required library fields.
     let cli = Cli {
         input: "input.vcf".into(),
         inspect: false,
         storage: StorageMode::Memory,
         memory_limit: None,
         temp_dir: None,
-        min_samples_locus: 4,
-        min_call_rate: 0.9,
+        min_samples_locus: Some(4),
+        min_call_rate: None,
         outgroup: vec![],
         output_folder: None,
         output_prefix: None,
