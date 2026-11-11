@@ -8,6 +8,70 @@ use vcf2phylip_rs::{
     reader::VariantReader,
 };
 
+/// Escape terminal controls in untrusted diagnostic text, without changing names
+/// used for filesystem access or scientific output.
+pub fn safe(message: impl Display) -> String {
+    let mut result = String::new();
+    for c in message.to_string().chars() {
+        if c.is_control() {
+            result.extend(c.escape_default());
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+/// Keep clap's own multiline layout while escaping values inserted into it.
+pub fn clap_error(mut error: clap::Error) -> String {
+    use clap::error::{ContextKind, ContextValue};
+
+    let values: Vec<_> = error
+        .context()
+        .filter(|(kind, _)| *kind != ContextKind::Usage)
+        .map(|(kind, value)| {
+            let value = match value {
+                ContextValue::String(s) => ContextValue::String(safe(s)),
+                ContextValue::Strings(items) => {
+                    ContextValue::Strings(items.iter().map(safe).collect())
+                }
+                ContextValue::StyledStr(s) => ContextValue::StyledStr(safe(s).into()),
+                ContextValue::StyledStrs(items) => {
+                    ContextValue::StyledStrs(items.iter().map(|s| safe(s).into()).collect())
+                }
+                _ => value.clone(),
+            };
+            (kind, value)
+        })
+        .collect();
+    for (kind, value) in values {
+        error.insert(kind, value);
+    }
+    error.to_string()
+}
+
+pub fn error_chain(error: &anyhow::Error) -> String {
+    use std::fmt::Write;
+
+    let mut chain = error.chain();
+    let mut result = format!("Error: {}", safe(chain.next().unwrap()));
+    let causes: Vec<_> = chain.collect();
+    if !causes.is_empty() {
+        result.push_str("\n\nCaused by:\n");
+        for (index, cause) in causes.iter().enumerate() {
+            if causes.len() == 1 {
+                let _ = write!(result, "    {}", safe(cause));
+            } else {
+                let _ = writeln!(result, "    {index}: {}", safe(cause));
+            }
+        }
+        if causes.len() > 1 {
+            result.pop();
+        }
+    }
+    result
+}
+
 pub struct Reporter {
     quiet: bool,
     verbose: bool,
@@ -25,7 +89,7 @@ impl Reporter {
 
     pub fn info(&self, message: impl Display) {
         if !self.quiet {
-            eprintln!("{message}");
+            eprintln!("{}", safe(message));
         }
     }
 
@@ -43,7 +107,7 @@ impl Reporter {
 
     pub fn header(&self, reader: &VariantReader, config: &ValidatedConfig, cli: &Cli) {
         for warning in &config.warnings {
-            eprintln!("warning: {warning}");
+            eprintln!("warning: {}", safe(warning));
         }
         self.info(format_args!(
             "Number of samples in input: {}",
@@ -137,5 +201,19 @@ impl Reporter {
             self.started.elapsed().as_secs_f64()
         ));
         self.info("Done.");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn error_chain_escapes_each_message_and_keeps_causes_separate() {
+        let error = anyhow::anyhow!("inner\x1b\nforged")
+            .context("middle\rmist")
+            .context("outer\nline");
+        assert_eq!(
+            super::error_chain(&error),
+            "Error: outer\\nline\n\nCaused by:\n    0: middle\\rmist\n    1: inner\\u{1b}\\nforged"
+        );
     }
 }

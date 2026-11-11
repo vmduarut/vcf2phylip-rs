@@ -23,8 +23,22 @@ struct Args {
     verbose: bool,
 }
 
-fn main() -> Result<()> {
-    let args = Args::parse();
+fn main() {
+    let args = match Args::try_parse() {
+        Ok(args) => args,
+        Err(error) if error.use_stderr() => {
+            eprint!("{}", logging::clap_error(error));
+            std::process::exit(2);
+        }
+        Err(error) => error.exit(),
+    };
+    if let Err(error) = run(args) {
+        eprintln!("{}", logging::error_chain(&error));
+        std::process::exit(1);
+    }
+}
+
+fn run(args: Args) -> Result<()> {
     let cli = args.cli;
     cli.validate_mode()?;
     let log = logging::Reporter::new(args.quiet, args.verbose);
