@@ -1,18 +1,39 @@
-# vcf2phylip-rs — Milestone 6
+# vcf2phylip-rs
 
-An independently designed Rust library and thin CLI for **streaming VCF/BCF
-inspection and scientific genotype processing**, plus **FASTA and
-relaxed PHYLIP conversion**, with optional bounded-cell-buffer disk storage.
-Milestone 4 was explicitly skipped: **both DNA NEXUS and SNAPP remain deferred**.
-This is not a claim of exact upstream output compatibility.
+Convert VCF/BCF genotypes into nucleotide alignments for phylogenetic analysis,
+or inspect input and filtering statistics without writing an alignment. This
+independently designed Rust CLI and library streams input records and offers
+in-memory or bounded-cell-buffer disk storage for conversion.
 
-**Distribution preparation, not a published release:** build/install from the
-local source today. See [installation and examples](docs/install.md),
-[container/BioConda recipes](docs/packaging.md), and the
-[toolchain policy and release checklist](docs/releases.md). No registry package,
-container image, or downloadable release is claimed to exist.
+**Available:** FASTA and relaxed PHYLIP. NEXUS/SNAPP output is deferred for now.
+Exact upstream output compatibility is not claimed.
 
-## Build and inspect
+Version 0.1.0 has not been published; no registry package, container image or
+downloadable release is claimed to exist. Build from local source for now.
+See the [documentation guide](docs/README.md), [installation and examples](docs/install.md),
+[compatibility and provenance](docs/compatibility.md),
+[benchmarking](docs/benchmarking.md), [packaging templates](docs/packaging.md),
+and the [release checklist](docs/releases.md).
+
+## Source install and quickstart
+
+From the repository root, with Rust/Cargo 1.99.0 or later and a native linker:
+
+```sh
+cargo install --path . --locked
+out=$(mktemp -d)
+vcf2phylip-rs -i examples/example.vcf --inspect
+vcf2phylip-rs -i examples/example.vcf -f -w --output-folder "$out"
+```
+
+Ensure Cargo's bin directory is on your PATH. The conversion writes
+`example.min4.phy`, `example.min4.fasta`, and `example.min4.used_sites.tsv` in
+the new directory; they can be compared with the corresponding `examples/expected.*`
+files. `-f` adds FASTA to the default PHYLIP output, and `-w` records retained
+sites. Existing outputs are never overwritten. `--locked` requires Cargo to use
+the checked-in lockfile without changing dependency resolution.
+
+For more options (replace input and scratch paths with your own):
 
 ```sh
 cargo build --locked
@@ -30,8 +51,8 @@ Tested with Rust/Cargo **1.99.0** on Linux; `rust-version = "1.99"` is the
 conservative tested minimum, not a claim that earlier toolchains cannot work.
 Direct dependencies are exactly pinned and `Cargo.lock` is included. All
 requested versions resolved: noodles 0.119.0, clap 4.6.7, thiserror 2.0.21,
-anyhow 1.0.104, flate2 1.1.11, and tempfile 3.27.0. No native
-libraries or toolchain installation is needed. Seeded resolution uses exactly
+anyhow 1.0.104, flate2 1.1.11, and tempfile 3.27.0. No external compression
+library is needed. Seeded resolution uses exactly
 pinned rand_chacha 0.10.0 (rand_core 0.10.1 in the lockfile), without the rand
 convenience API. There is no application parallelism; noodles brings rayon
 transitively, and tempfile brings randomness dependencies for staging filenames.
@@ -73,8 +94,8 @@ transitively, and tempfile brings randomness dependencies for staging filenames.
 ## Conversion and output safety
 
 Without `--inspect`, relaxed sequential PHYLIP is the default. `-f` adds FASTA;
-`-p -f` selects FASTA only. `-p` alone is an error. `-n` and `-b` fail before
-output effects (both M4 writers are deferred). Both writers use the same nucleotide matrix.
+`-p -f` selects FASTA only. `-p` alone is an error. The reserved `-n` and `-b`
+flags fail before output effects. Both writers use the same nucleotide matrix.
 PHYLIP starts with `S L`, then full names separated from unwrapped sequences by
 two spaces. FASTA wraps sequence lines at 80 bases. Identifiers retain their
 exact UTF-8 bytes: no truncation, cleaning, escaping or remapping. Empty/duplicate
@@ -113,7 +134,7 @@ publication can leave earlier outputs finalized; diagnostics state this, and no
 rollback deletes potentially replaced files. No durability across power loss,
 cleanup after SIGKILL, or protection from a hostile directory owner is promised.
 
-### Storage and resource limits (M5)
+### Storage and resource limits
 
 The memory backend stores one growable `Vec<u8>` per sample, no second transposed matrix
 or binary matrix. Payload is S × L bytes, with checked dimensions; allocator
@@ -194,6 +215,14 @@ shares the same filter/collection loop for both backends.
 
 ## Scientific contract
 
+By default, a genotype with more than one distinct known base is represented
+by its IUPAC ambiguity code: for example, A/G becomes `R` and C/T becomes `Y`.
+This also applies to higher-ploidy calls: the code represents the set of
+distinct bases, not their dosage or phase. Thus A/A/G and A/G/G both become
+`R`. A fully known A/C/G/T call and a missing call both appear as `N` in an
+alignment, but the former counts as called and the latter does not. Partial
+calls depend on the policy below; `--resolve-IUPAC` changes this representation.
+
 - An eligible SNP has one canonical A/C/G/T REF and at least one distinct
   canonical single-base ALT, case-insensitively. All REF/ALT bases must be
   distinct. ALT `.`, N, `*`, symbolic alleles, indels, MNPs and mixed records are
@@ -238,20 +267,6 @@ parallel callers must retain **original** record/sample keys, including rejected
 records. Reordering/filtering samples or renumbering records can change results;
 no invariance under those operations is promised. Golden vectors lock this v1
 scheme, not upstream Python RNG equivalence.
-
-## Milestones
-
-- M1 complete: streaming readers and strict structural/genotype validation.
-- M2 complete: genotype/IUPAC policies, independent filters, keyed seeded
-  resolution and scientific inspection counters.
-- M3 complete: in-memory nucleotide matrix, stable sample ordering, FASTA/relaxed
-  PHYLIP, retained-site reporting and staged no-clobber output safety.
-- M4 skipped/deferred: both nucleotide NEXUS and binary NEXUS/SNAPP writers.
-- M5 complete: bounded-cell-buffer tiled disk storage and reproducible opt-in
-  benchmark harness (no performance superiority claim).
-- M6: Linux/macOS CI, manually gated artifact-only release builds, tested local
-  Cargo packaging and examples, and unvalidated container/BioConda templates.
-  Remote CI/platform execution and actual publication remain external checks.
 
 ## Development checks
 

@@ -8,7 +8,7 @@ Use semantic versioning: before 1.0, incompatible public API/CLI/scientific
 contract changes require a minor bump; compatible fixes use patch bumps. After
 1.0, incompatible changes require a major bump. Describe any alignment-byte,
 seeded-resolution, filtering, error, or storage-contract change explicitly in
-release notes; it is not merely a performance detail. NEXUS/SNAPP remain deferred.
+release notes; it is not merely a performance detail.
 
 `Cargo.toml` declares **Rust 1.99** as the minimum supported Rust version (MSRV),
 tested locally with rustc/Cargo 1.99.0. This conservative policy does not claim

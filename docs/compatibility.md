@@ -17,7 +17,7 @@ legal advice or a declaration of permission to relicense upstream material.
 
 ## Argument vocabulary retained
 
-| Argument | Milestone 5 status |
+| Argument | Current status |
 | --- | --- |
 | `-i`, `--input` | Required input path |
 | `-m`, `--min-samples-locus` | Positive integer, default 4, capped with warning; independently applied to DNA/binary |
@@ -25,8 +25,6 @@ legal advice or a declaration of permission to relicense upstream material.
 | `--output-folder`, `--output-prefix` | Output directory and safe basename; defaults cwd and input basename |
 | `-p`, `--phylip-disable` | Disable default relaxed PHYLIP; requires FASTA |
 | `-f`, `--fasta` | Add FASTA output |
-| `-n`, `--nexus` | Reserved, explicitly unsupported |
-| `-b`, `--nexus-binary` | Reserved, explicitly unsupported |
 | `-r`, `--resolve-IUPAC` | Seeded allele-copy resolution; explicit `--seed` required |
 | `--seed` | u64, permitted only with `-r` |
 | `--partial-missing` | `missing` (default) or `called-alleles`, nucleotide calls only |
@@ -63,10 +61,9 @@ hand-computed synthetic tests, not upstream output-equivalence claims. See the
 [scientific contract](../README.md#scientific-contract) and
 [output safety contract](../README.md#conversion-and-output-safety).
 
-## Planned, not shipped
+## Deferred and current behavior
 
-M4 was explicitly skipped: both nucleotide NEXUS and binary NEXUS/SNAPP remain
-deferred. M5 adds optional bounded-cell-buffer disk-backed storage; the default
+Optional bounded-cell-buffer disk-backed storage is available; the default
 memory backend remains unbounded in loci. The same processing and writer paths
 produce identical backend outputs; this is not upstream byte compatibility.
 Scientific inspection remains a separate no-write mode.
