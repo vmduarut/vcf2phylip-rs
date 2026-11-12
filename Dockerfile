@@ -9,10 +9,12 @@ COPY src ./src
 RUN cargo build --release --locked
 
 FROM ${RUNTIME_IMAGE}
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends procps \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=build /build/target/release/vcf2phylip-rs /usr/local/bin/vcf2phylip-rs
 COPY LICENSE /usr/share/licenses/vcf2phylip-rs/LICENSE
 RUN mkdir /data && chown 65532:65532 /data
 USER 65532:65532
 WORKDIR /data
-ENTRYPOINT ["/usr/local/bin/vcf2phylip-rs"]
-CMD ["--help"]
+CMD ["/usr/local/bin/vcf2phylip-rs", "--help"]

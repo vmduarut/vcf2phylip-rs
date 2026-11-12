@@ -15,8 +15,9 @@ separate approval. Commands below are future validation instructions.
 The root Dockerfile builds with locked Cargo dependencies, using pinned Rust
 1.99.0/bookworm and Debian bookworm-slim multiarchitecture image digests. Build
 and runtime use the same Debian generation to avoid an obvious glibc mismatch.
-The final image contains the executable and GPL license, not the compiler; input
-and output default to `/data`. It runs as numeric nonroot UID/GID 65532.
+The final image contains the executable, GPL license and Debian `procps` (`ps` is
+needed for Nextflow task metrics), not the compiler; input and output default to
+`/data`. It runs as numeric nonroot UID/GID 65532.
 `.dockerignore` allowlists only the build inputs, omitting repository/cache/output
 data. Native architecture only; no multiarchitecture release was tested.
 
@@ -24,12 +25,13 @@ From the repository root, on an authorized Docker-capable host:
 
 ```sh
 docker build -t vcf2phylip-rs:local .
-docker run --rm vcf2phylip-rs:local --version
-docker run --rm vcf2phylip-rs:local --help
+docker run --rm vcf2phylip-rs:local ps --version
+docker run --rm vcf2phylip-rs:local /usr/local/bin/vcf2phylip-rs --version
+docker run --rm vcf2phylip-rs:local /usr/local/bin/vcf2phylip-rs --help
 out=$(mktemp -d)
 docker run --rm --user "$(id -u):$(id -g)" \
   -v "$PWD/examples:/input:ro" -v "$out:/data" \
-  vcf2phylip-rs:local -i /input/example.vcf -f -w
+  vcf2phylip-rs:local /usr/local/bin/vcf2phylip-rs -i /input/example.vcf -f -w
 diff examples/expected.phy "$out/example.min4.phy"
 ```
 
