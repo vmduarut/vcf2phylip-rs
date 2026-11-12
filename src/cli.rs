@@ -48,8 +48,8 @@ pub struct Cli {
     #[arg(short, long)]
     pub outgroup: Vec<String>,
     /// Output directory (defaults to the current directory).
-    #[arg(long)]
-    pub output_folder: Option<PathBuf>,
+    #[arg(long, default_value = ".", conflicts_with = "inspect")]
+    pub output_folder: PathBuf,
     /// Output basename (defaults to input basename without known format suffixes).
     #[arg(long)]
     pub output_prefix: Option<String>,
@@ -182,7 +182,7 @@ impl Cli {
             && (self.storage != StorageMode::Memory
                 || self.memory_limit.is_some()
                 || self.temp_dir.is_some()
-                || self.output_folder.is_some()
+                || self.output_folder != std::path::Path::new(".")
                 || self.output_prefix.is_some()
                 || self.force
                 || self.phylip_disable
@@ -265,7 +265,29 @@ impl Cli {
 
 #[cfg(test)]
 mod tests {
-    use super::rate_minimum;
+    use super::{Cli, rate_minimum};
+    use clap::Parser;
+    use std::path::PathBuf;
+
+    #[test]
+    fn output_folder_defaults_to_current_directory_and_accepts_explicit_path() {
+        let default = Cli::try_parse_from(["app", "-i", "input.vcf"]).unwrap();
+        assert_eq!(default.output_folder, PathBuf::from("."));
+        let explicit =
+            Cli::try_parse_from(["app", "-i", "input.vcf", "--output-folder", "out"]).unwrap();
+        assert_eq!(explicit.output_folder, PathBuf::from("out"));
+        assert!(
+            Cli::try_parse_from([
+                "app",
+                "-i",
+                "input.vcf",
+                "--inspect",
+                "--output-folder",
+                "."
+            ])
+            .is_err()
+        );
+    }
 
     #[test]
     fn decimal_thresholds_match_exact_hundredths_without_float_rounding() {

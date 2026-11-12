@@ -919,7 +919,7 @@ fn conversion_no_clobber_links_collisions_and_bad_directory() {
     std::fs::create_dir(&target).unwrap();
     assert!(convert(&cli()).is_err());
     let mut config = cli();
-    config.output_folder = Some(input.join("impossible"));
+    config.output_folder = input.join("impossible");
     assert!(convert(&config).is_err());
     config.input = dir.path().join("absent");
     assert!(convert(&config).is_err());

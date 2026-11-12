@@ -112,10 +112,7 @@ pub fn convert(cli: &Cli) -> Result<ConversionReport> {
     )?;
     let mut order = config.outgroup_indices.clone();
     order.extend((0..samples.len()).filter(|i| !config.outgroup_indices.contains(i)));
-    let folder = cli
-        .output_folder
-        .clone()
-        .unwrap_or_else(|| PathBuf::from("."));
+    let folder = &cli.output_folder;
     let base = format!("{prefix}.min{}", config.minimum_samples);
     let mut targets = Vec::new();
     if !cli.phylip_disable {
@@ -128,7 +125,7 @@ pub fn convert(cli: &Cli) -> Result<ConversionReport> {
         targets.push(folder.join(format!("{base}.used_sites.tsv")));
     }
     output::preflight(&targets, &cli.input, cli.force)?;
-    std::fs::create_dir_all(&folder)
+    std::fs::create_dir_all(folder)
         .with_context(|| format!("creating output directory {}", folder.display()))?;
     let mut staged = targets
         .into_iter()

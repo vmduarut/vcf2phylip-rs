@@ -1,5 +1,5 @@
 //! Output staging. Finalization is atomic per file, not per output set.
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -54,12 +54,11 @@ pub(crate) fn preflight(paths: &[PathBuf], input: &Path, force: bool) -> Result<
 fn check_target(path: &Path, input: &Path, force: bool) -> Result<Option<fs::Permissions>> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
-            if !force {
-                bail!(
-                    "refusing existing output target (no overwrite; use --force): {}",
-                    path.display()
-                );
-            }
+            ensure!(
+                force,
+                "refusing existing output target (no overwrite; use --force): {}",
+                path.display()
+            );
             ensure!(
                 metadata.is_file(),
                 "refusing non-regular output target (including directories and symlinks): {}",

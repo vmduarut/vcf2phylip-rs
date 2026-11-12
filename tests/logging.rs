@@ -286,7 +286,7 @@ fn public_struct_literals_track_documented_configuration_shape() {
         min_samples_locus: Some(4),
         min_call_rate: None,
         outgroup: vec![],
-        output_folder: None,
+        output_folder: ".".into(),
         output_prefix: None,
         force: false,
         phylip_disable: false,
