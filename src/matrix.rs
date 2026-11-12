@@ -1,7 +1,7 @@
 //! One growable sequence per sample, stored in original header order.
 use anyhow::{Result, ensure};
 
-use crate::filter::ProcessedLocus;
+use crate::processing::ProcessedLocus;
 
 /// Read an alignment in bounded chunks, in original header sample order.
 /// Implementations must return exactly `sites()` bytes per valid sample.
@@ -13,13 +13,13 @@ pub trait Alignment {
     fn sites(&self) -> usize;
     fn row_chunks(&self, sample: usize, emit: &mut dyn FnMut(&[u8]) -> Result<()>) -> Result<()>;
 
-    fn validate_order(&self, order: &[usize]) -> Result<()> {
+    fn validate_order(&self, sample_order: &[usize]) -> Result<()> {
         let mut seen = vec![false; self.samples().len()];
         ensure!(
-            order.len() == seen.len(),
+            sample_order.len() == seen.len(),
             "output sample order dimension mismatch"
         );
-        for &i in order {
+        for &i in sample_order {
             ensure!(
                 i < seen.len() && !seen[i],
                 "output order is not a permutation"

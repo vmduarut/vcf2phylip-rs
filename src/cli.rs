@@ -2,8 +2,8 @@
 use std::{collections::HashSet, path::PathBuf};
 
 use crate::{
-    filter::ProcessingConfig,
-    genotype::{PartialMissingPolicy, Resolution},
+    genotype::{NucleotideResolution, PartialMissingPolicy},
+    processing::VariantProcessor,
     storage::StorageMode,
 };
 use clap::{ArgAction, Parser};
@@ -109,7 +109,7 @@ pub struct ValidatedConfig {
     pub minimum_samples: usize,
     pub outgroup_indices: Vec<usize>,
     pub warnings: Vec<String>,
-    pub processing: ProcessingConfig,
+    pub processor: VariantProcessor,
 }
 
 fn positive_usize(value: &str) -> Result<usize, String> {
@@ -251,12 +251,13 @@ impl Cli {
             minimum_samples,
             outgroup_indices,
             warnings,
-            processing: ProcessingConfig::new(
+            processor: VariantProcessor::new(
                 samples.len(),
                 Some(minimum_samples),
                 self.partial_missing,
-                self.seed
-                    .map_or(Resolution::Iupac, |seed| Resolution::Random { seed }),
+                self.seed.map_or(NucleotideResolution::Iupac, |seed| {
+                    NucleotideResolution::Random { seed }
+                }),
             )
             .map_err(|_| ConfigError::InvalidMinimum)?,
         })

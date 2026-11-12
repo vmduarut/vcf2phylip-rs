@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use vcf2phylip_rs::filter::Stats;
+use vcf2phylip_rs::processing::Stats;
 use vcf2phylip_rs::{
     cli::{Cli, DEFAULT_CALL_RATE},
     reader::VariantReader,
@@ -54,13 +54,13 @@ fn run(args: Args) -> Result<()> {
     let samples: Vec<_> = reader.header().sample_names().iter().cloned().collect();
     let config = cli.validate_samples(&samples)?;
     log.warnings(&config.warnings);
-    let mut missing_gt = 0_u64;
+    let mut absent_gt_calls = 0_u64;
     let mut stats = Stats::default();
     while let Some(variant) = reader.next_variant()? {
-        missing_gt += variant.genotypes.iter().filter(|gt| gt.is_none()).count() as u64;
+        absent_gt_calls += variant.genotypes.iter().filter(|gt| gt.is_none()).count() as u64;
         stats.observe(
             &config
-                .processing
+                .processor
                 .process(&variant, reader.records_read() - 1)?,
         );
     }
@@ -71,7 +71,7 @@ fn run(args: Args) -> Result<()> {
         reader.is_compressed()
     );
     println!(
-        "Samples: {}; records: {}; absent GT calls (unknown ploidy): {missing_gt}",
+        "Samples: {}; records: {}; absent GT calls (unknown ploidy): {absent_gt_calls}",
         samples.len(),
         reader.records_read()
     );
@@ -87,8 +87,8 @@ fn run(args: Args) -> Result<()> {
     );
     println!(
         "Accepted nucleotide loci: {}; accepted binary loci: {}; binary eligible: {}; rejected non-SNP: {}",
-        stats.nucleotide_accepted,
-        stats.binary_accepted,
+        stats.nucleotide_sites_accepted,
+        stats.binary_sites_accepted,
         stats.binary_eligible,
         stats.rejected_non_snp
     );

@@ -17,7 +17,7 @@ impl BaseMask {
     }
 }
 
-pub fn canonical_base(allele: &str) -> Option<u8> {
+pub fn canonical_base_mask(allele: &str) -> Option<u8> {
     if allele.len() != 1 {
         return None;
     }

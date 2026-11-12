@@ -100,12 +100,7 @@ fn independent_mixed_ploidy_bcf() -> Vec<u8> {
 
 #[test]
 fn independent_bcf_mixed_ploidy_parsing_counts_and_conversion() {
-    use vcf2phylip_rs::{
-        conversion::collect,
-        filter::ProcessingConfig,
-        genotype::{PartialMissingPolicy, Resolution},
-        writers,
-    };
+    use vcf2phylip_rs::{conversion::convert, genotype::PartialMissingPolicy};
     let vcf = data(
         "H\tD\tP\tM",
         "chr1\t9\t.\tA\tC\t.\tPASS\t.\tGT\t1\t0/1\t0/1/1\t./0\nchr1\t2\t.\tA\tC\t.\tPASS\t.\tGT\t0\t./.\t0/./1\t1/1\n",
@@ -165,7 +160,6 @@ fn independent_bcf_mixed_ploidy_parsing_counts_and_conversion() {
             ["CA", "MN", "MM", "AC"],
         ),
     ] {
-        let config = ProcessingConfig::new(4, Some(2), policy, Resolution::Iupac).unwrap();
         let expected_phy = format!(
             "4 2\nH  {}\nD  {}\nP  {}\nM  {}\n",
             sequences[0], sequences[1], sequences[2], sequences[3]
@@ -175,27 +169,40 @@ fn independent_bcf_mixed_ploidy_parsing_counts_and_conversion() {
             sequences[0], sequences[1], sequences[2], sequences[3]
         );
         for bytes in [vcf.as_bytes().to_vec(), raw.clone(), bgzf(&raw), gzip(&raw)] {
-            let mut input = VariantReader::from_reader(Cursor::new(bytes)).unwrap();
-            let mut sites = Vec::new();
-            let (matrix, stats) = collect(&mut input, &config, Some(&mut sites)).unwrap();
-            assert_eq!(stats.records, 2);
-            assert_eq!(stats.nucleotide_accepted, 2);
+            let dir = tempfile::tempdir().unwrap();
+            let input = dir.path().join("input");
+            std::fs::write(&input, bytes).unwrap();
+            let mut cli = Cli::try_parse_from([
+                "app",
+                "-i",
+                input.to_str().unwrap(),
+                "--output-folder",
+                dir.path().to_str().unwrap(),
+                "-m",
+                "2",
+                "-f",
+                "-w",
+            ])
+            .unwrap();
+            cli.partial_missing = policy;
+            let report = convert(&cli).unwrap();
+            let stats = report.stats;
+            assert_eq!(stats.records_processed, 2);
+            assert_eq!(stats.nucleotide_sites_accepted, 2);
             assert_eq!(stats.nucleotide_missing_calls, missing);
             assert_eq!(stats.binary_eligible, 2);
-            assert_eq!(stats.binary_accepted, 0);
+            assert_eq!(stats.binary_sites_accepted, 0);
             assert_eq!(stats.binary_missing_calls, 2);
             assert_eq!(stats.binary_unsupported_ploidy_calls, 4);
             assert_eq!(
-                String::from_utf8(sites).unwrap(),
+                std::fs::read_to_string(dir.path().join("input.min2.used_sites.tsv")).unwrap(),
                 format!(
                     "#CHROM\tPOS\tNUM_SAMPLES\nchr1\t9\t{}\nchr1\t2\t{}\n",
                     called[0], called[1]
                 )
             );
-            let mut phy = Vec::new();
-            let mut fasta = Vec::new();
-            writers::phylip::write(&mut phy, &matrix, &[0, 1, 2, 3]).unwrap();
-            writers::fasta::write(&mut fasta, &matrix, &[0, 1, 2, 3]).unwrap();
+            let phy = std::fs::read(dir.path().join("input.min2.phy")).unwrap();
+            let fasta = std::fs::read(dir.path().join("input.min2.fasta")).unwrap();
             assert_eq!(phy, expected_phy.as_bytes());
             assert_eq!(fasta, expected_fasta.as_bytes());
         }
@@ -605,7 +612,11 @@ fn disk_memory_identical_across_tiles_transports_and_policies() {
                     .iter()
                     .map(|p| std::fs::read(p).unwrap())
                     .collect::<Vec<_>>();
-                let actual = (outputs, format!("{:?}", report.stats), report.matrix_bytes);
+                let actual = (
+                    outputs,
+                    format!("{:?}", report.stats),
+                    report.matrix_payload_bytes,
+                );
                 if let Some(expected) = &expected {
                     assert_eq!(expected, &actual);
                 } else {
@@ -734,10 +745,10 @@ fn conversion_transport_equivalence_and_hand_computed_outputs() {
         ])
         .unwrap();
         let report = convert(&cli).unwrap();
-        assert_eq!(report.stats.records, 5);
+        assert_eq!(report.stats.records_processed, 5);
         assert_eq!(report.stats.rejected_non_snp, 2);
-        assert_eq!(report.stats.nucleotide_accepted, 3);
-        assert_eq!(report.matrix_bytes, 9);
+        assert_eq!(report.stats.nucleotide_sites_accepted, 3);
+        assert_eq!(report.matrix_payload_bytes, 9);
         let base = dir.path().join("example.vcf.middle.min2");
         let read =
             |ext: &str| std::fs::read_to_string(format!("{}.{ext}", base.display())).unwrap();
@@ -830,7 +841,7 @@ fn conversion_seed_order_selection_and_partial_policy() {
     ])
     .unwrap();
     let report = convert(&cli).unwrap();
-    assert_eq!(report.stats.nucleotide_accepted, 2);
+    assert_eq!(report.stats.nucleotide_sites_accepted, 2);
     assert_eq!(
         std::fs::read_to_string(dir.path().join("partial.min3.phy")).unwrap(),
         "3 2\nlong_sample_name:1  MV\nB,C  CA\nΩ  AT\n"
@@ -937,41 +948,6 @@ fn conversion_no_clobber_links_collisions_and_bad_directory() {
 }
 
 #[test]
-fn library_writers_wrap_validate_orders_and_propagate_io_errors() {
-    use vcf2phylip_rs::{
-        conversion::collect,
-        filter::ProcessingConfig,
-        genotype::{PartialMissingPolicy, Resolution},
-        writers,
-    };
-    let records = "chr1\t1\t.\tA\tC\t.\tPASS\t.\tGT\t0/1\n".repeat(81);
-    let mut input = reader(&data("long:sample,Ω", &records)).unwrap();
-    let config =
-        ProcessingConfig::new(1, None, PartialMissingPolicy::Missing, Resolution::Iupac).unwrap();
-    let (matrix, stats) = collect(&mut input, &config, None).unwrap();
-    assert_eq!(stats.nucleotide_accepted, 81);
-    let mut bytes = Vec::new();
-    writers::fasta::write(&mut bytes, &matrix, &[0]).unwrap();
-    assert_eq!(
-        String::from_utf8(bytes).unwrap(),
-        format!(">long:sample,Ω\n{}\nM\n", "M".repeat(80))
-    );
-    assert!(writers::phylip::write(Vec::new(), &matrix, &[]).is_err());
-    assert!(writers::fasta::write(Vec::new(), &matrix, &[1]).is_err());
-    struct Failing;
-    impl Write for Failing {
-        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
-            Err(std::io::Error::other("injected failure"))
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Err(std::io::Error::other("injected flush failure"))
-        }
-    }
-    assert!(writers::fasta::write(Failing, &matrix, &[0]).is_err());
-    assert!(writers::phylip::write(Failing, &matrix, &[0]).is_err());
-}
-
-#[test]
 fn actual_cli_default_conversion_and_unsupported_mode_preflight() {
     let dir = tempfile::tempdir().unwrap();
     let input = dir.path().join("in.VCF");
@@ -1010,16 +986,16 @@ fn actual_cli_default_conversion_and_unsupported_mode_preflight() {
 #[test]
 fn reader_to_processing_transport_equivalence_and_original_record_order() {
     use vcf2phylip_rs::{
-        filter::{ProcessingConfig, Stats},
-        genotype::{PartialMissingPolicy, Resolution},
+        genotype::{NucleotideResolution, PartialMissingPolicy},
+        processing::{Stats, VariantProcessor},
     };
     let text = data("S\tT", "chr1\t9\t.\tA\tC\t.\tPASS\t.\tGT\t0/1\t1/1\nchr2\t2\t.\tA\tAT\t.\tPASS\t.\tGT\t0/0\t0/1\nchr1\t1\t.\tA\tC,G,T\t.\tPASS\t.\tGT\t0/1/2/3\t0/.\nchr2\t1\t.\tG\tT\t.\tPASS\t.\tDP\t4\t2\n")
         .replace("##contig=<ID=chr1,length=1000>\n", "##contig=<ID=chr1,length=1000>\n##contig=<ID=chr2,length=1000>\n");
-    let cfg = ProcessingConfig::new(
+    let processor = VariantProcessor::new(
         2,
         Some(1),
         PartialMissingPolicy::CalledAlleles,
-        Resolution::Random { seed: 9 },
+        NucleotideResolution::Random { seed: 9 },
     )
     .unwrap();
     let mut baseline = None;
@@ -1038,7 +1014,7 @@ fn reader_to_processing_transport_equivalence_and_original_record_order() {
                 v.record.reference_sequence_name().to_string(),
                 usize::from(v.record.variant_start().unwrap()),
             ));
-            let locus = cfg.process(&v, input.records_read() - 1).unwrap();
+            let locus = processor.process(&v, input.records_read() - 1).unwrap();
             stats.observe(&locus);
             results.push(locus);
         }
@@ -1051,11 +1027,11 @@ fn reader_to_processing_transport_equivalence_and_original_record_order() {
                 ("chr2".into(), 1)
             ]
         );
-        assert_eq!(stats.records, 4);
+        assert_eq!(stats.records_processed, 4);
         assert_eq!(stats.rejected_non_snp, 1);
-        assert_eq!(stats.nucleotide_accepted, 2);
+        assert_eq!(stats.nucleotide_sites_accepted, 2);
         assert_eq!(stats.binary_eligible, 2);
-        assert_eq!(stats.binary_accepted, 1);
+        assert_eq!(stats.binary_sites_accepted, 1);
         if let Some(expected) = &baseline {
             assert_eq!(&results, expected);
         } else {

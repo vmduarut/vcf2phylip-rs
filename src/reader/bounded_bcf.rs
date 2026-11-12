@@ -27,7 +27,7 @@ impl Default for BcfLimits {
     }
 }
 
-fn word(input: &mut impl Read) -> Result<usize> {
+fn read_length_word(input: &mut impl Read) -> Result<usize> {
     let mut bytes = [0; 4];
     input.read_exact(&mut bytes)?;
     Ok(usize::try_from(u32::from_le_bytes(bytes))?)
@@ -52,7 +52,7 @@ pub(super) fn read_header(input: &mut impl Read, limits: BcfLimits) -> Result<vc
     let mut magic = [0; 5];
     input.read_exact(&mut magic)?;
     ensure!(magic == *b"BCF\x02\x02", "unsupported BCF version");
-    let len = word(input)?;
+    let len = read_length_word(input)?;
     ensure!(len <= limits.header_bytes, "BCF header byte limit exceeded");
     let data = bounded_bytes(input, len)?;
     let end = data
@@ -97,8 +97,8 @@ pub(super) fn read_frame(
     header: &vcf::Header,
     limits: BcfLimits,
 ) -> Result<Vec<u8>> {
-    let shared = word(input).context("BCF shared length")?;
-    let individual = word(input).context("BCF individual length")?;
+    let shared = read_length_word(input).context("BCF shared length")?;
+    let individual = read_length_word(input).context("BCF individual length")?;
     let len = shared
         .checked_add(individual)
         .context("BCF record length overflow")?;

@@ -6,13 +6,13 @@ use std::io::{BufWriter, Write};
 pub fn write(
     writer: impl Write,
     matrix: &(impl Alignment + ?Sized),
-    order: &[usize],
+    sample_order: &[usize],
 ) -> Result<()> {
     ensure!(matrix.sites() > 0, "cannot write a zero-site alignment");
-    matrix.validate_order(order)?;
+    matrix.validate_order(sample_order)?;
     let mut writer = BufWriter::new(writer);
     writeln!(writer, "{} {}", matrix.samples().len(), matrix.sites())?;
-    for &i in order {
+    for &i in sample_order {
         write!(writer, "{}  ", matrix.samples()[i])?;
         matrix.row_chunks(i, &mut |chunk| Ok(writer.write_all(chunk)?))?;
         writer.write_all(b"\n")?;

@@ -4,13 +4,13 @@ use std::{fmt::Display, time::Instant};
 use vcf2phylip_rs::{
     cli::{Cli, DEFAULT_CALL_RATE},
     conversion::ConversionReport,
-    filter::Stats,
+    processing::Stats,
     reader::Format,
 };
 
 /// Escape terminal controls in untrusted diagnostic text, without changing names
 /// used for filesystem access or scientific output.
-pub fn safe(message: impl Display) -> String {
+pub fn escape_terminal_controls(message: impl Display) -> String {
     let mut result = String::new();
     for c in message.to_string().chars() {
         if c.is_control() {
@@ -31,14 +31,19 @@ pub fn clap_error(mut error: clap::Error) -> String {
         .filter(|(kind, _)| *kind != ContextKind::Usage)
         .map(|(kind, value)| {
             let value = match value {
-                ContextValue::String(s) => ContextValue::String(safe(s)),
+                ContextValue::String(s) => ContextValue::String(escape_terminal_controls(s)),
                 ContextValue::Strings(items) => {
-                    ContextValue::Strings(items.iter().map(safe).collect())
+                    ContextValue::Strings(items.iter().map(escape_terminal_controls).collect())
                 }
-                ContextValue::StyledStr(s) => ContextValue::StyledStr(safe(s).into()),
-                ContextValue::StyledStrs(items) => {
-                    ContextValue::StyledStrs(items.iter().map(|s| safe(s).into()).collect())
+                ContextValue::StyledStr(s) => {
+                    ContextValue::StyledStr(escape_terminal_controls(s).into())
                 }
+                ContextValue::StyledStrs(items) => ContextValue::StyledStrs(
+                    items
+                        .iter()
+                        .map(|s| escape_terminal_controls(s).into())
+                        .collect(),
+                ),
                 _ => value.clone(),
             };
             (kind, value)
@@ -54,15 +59,15 @@ pub fn error_chain(error: &anyhow::Error) -> String {
     use std::fmt::Write;
 
     let mut chain = error.chain();
-    let mut result = format!("Error: {}", safe(chain.next().unwrap()));
+    let mut result = format!("Error: {}", escape_terminal_controls(chain.next().unwrap()));
     let causes: Vec<_> = chain.collect();
     if !causes.is_empty() {
         result.push_str("\n\nCaused by:\n");
         for (index, cause) in causes.iter().enumerate() {
             if causes.len() == 1 {
-                let _ = write!(result, "    {}", safe(cause));
+                let _ = write!(result, "    {}", escape_terminal_controls(cause));
             } else {
-                let _ = writeln!(result, "    {index}: {}", safe(cause));
+                let _ = writeln!(result, "    {index}: {}", escape_terminal_controls(cause));
             }
         }
         if causes.len() > 1 {
@@ -89,7 +94,7 @@ impl Reporter {
 
     pub fn info(&self, message: impl Display) {
         if !self.quiet {
-            eprintln!("{}", safe(message));
+            eprintln!("{}", escape_terminal_controls(message));
         }
     }
 
@@ -107,7 +112,7 @@ impl Reporter {
 
     pub fn warnings(&self, warnings: &[String]) {
         for warning in warnings {
-            eprintln!("warning: {}", safe(warning));
+            eprintln!("warning: {}", escape_terminal_controls(warning));
         }
     }
 
@@ -157,7 +162,10 @@ impl Reporter {
     }
 
     fn stats(&self, stats: &Stats) {
-        self.info(format_args!("Total records processed: {}", stats.records));
+        self.info(format_args!(
+            "Total records processed: {}",
+            stats.records_processed
+        ));
         self.info(format_args!("Records excluded as non-SNP: {} (includes absent ALT, noncanonical and duplicate alleles)", stats.rejected_non_snp));
         self.info(format_args!(
             "SNP loci excluded for insufficient called samples: {}",
@@ -165,7 +173,7 @@ impl Reporter {
         ));
         self.info(format_args!(
             "SNP loci retained: {}",
-            stats.nucleotide_accepted
+            stats.nucleotide_sites_accepted
         ));
         if self.verbose {
             self.info(format_args!(
@@ -179,7 +187,7 @@ impl Reporter {
         self.warnings(&report.warnings);
         self.start(cli);
         self.header(
-            report.samples,
+            report.sample_count,
             report.minimum_samples,
             report.input_format,
             report.input_compressed,
@@ -188,7 +196,7 @@ impl Reporter {
         self.stats(&report.stats);
         self.info(format_args!(
             "Matrix payload: {} bytes ({:?}, not peak RSS)",
-            report.matrix_bytes, report.storage
+            report.matrix_payload_bytes, report.storage
         ));
         for path in &report.outputs {
             let label = match path.extension().and_then(|ext| ext.to_str()) {

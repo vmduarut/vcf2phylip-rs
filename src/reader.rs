@@ -122,7 +122,7 @@ impl VariantReader {
         if self.finished {
             return Ok(None);
         }
-        let result = self.read_next().with_context(|| {
+        let result = self.read_next_variant().with_context(|| {
             format!(
                 "record {} ({} records successfully read)",
                 self.records_read + 1,
@@ -136,7 +136,7 @@ impl VariantReader {
         result
     }
 
-    fn read_next(&mut self) -> Result<Option<Variant>> {
+    fn read_next_variant(&mut self) -> Result<Option<Variant>> {
         let mut record = vcf::variant::RecordBuf::default();
         match &mut self.adapter {
             Adapter::Vcf(input) => {

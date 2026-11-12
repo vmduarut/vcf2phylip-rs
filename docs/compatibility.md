@@ -59,7 +59,7 @@ Public `Cli::min_samples_locus` is `Option<usize>` and `Cli::min_call_rate` chan
 from `f64` to `Option<f64>`. Use `Some(n)`/`None` for count-only filtering,
 `None`/`Some(rate)` for an explicit rate, or `None`/`None` for the default 0.9 rate.
 Supplying both as `Some` fails public validation. The low-level
-`ProcessingConfig::new` count-only API retains its legacy `None` behavior.
+`VariantProcessor::new` count-only API retains its legacy `None` behavior.
 
 ## Known reference bugs are not compatibility promises
 

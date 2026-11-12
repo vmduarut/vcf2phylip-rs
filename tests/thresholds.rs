@@ -15,7 +15,7 @@ fn configured(samples: usize, flags: &[&str]) -> vcf2phylip_rs::cli::ValidatedCo
     .unwrap();
     let names = (0..samples).map(|i| format!("S{i}")).collect::<Vec<_>>();
     let config = cli.validate_samples(&names).unwrap();
-    assert_eq!(config.minimum_samples, config.processing.minimum_samples());
+    assert_eq!(config.minimum_samples, config.processor.minimum_samples());
     config
 }
 
@@ -226,8 +226,8 @@ fn inspection_memory_disk_and_filenames_share_threshold_and_call_policy() {
             )
             .unwrap();
             let report = convert(&cli).unwrap();
-            assert_eq!(report.stats.nucleotide_accepted, dna);
-            assert_eq!(report.stats.binary_accepted, binary);
+            assert_eq!(report.stats.nucleotide_sites_accepted, dna);
+            assert_eq!(report.stats.binary_sites_accepted, binary);
             let bytes = report
                 .outputs
                 .iter()

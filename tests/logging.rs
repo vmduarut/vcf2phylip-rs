@@ -253,7 +253,7 @@ fn conversion_report_captures_input_threshold_warnings_and_partition() {
     ])
     .unwrap();
     let report = convert(&cli).unwrap();
-    assert_eq!(report.samples, 2);
+    assert_eq!(report.sample_count, 2);
     assert_eq!(report.minimum_samples, 2);
     assert_eq!(report.input_format, Format::Vcf);
     assert!(!report.input_compressed);
@@ -265,15 +265,15 @@ fn conversion_report_captures_input_threshold_warnings_and_partition() {
     assert_eq!(stats.nucleotide_below_minimum(), 2);
     assert_eq!(stats.nucleotide_missing_calls, 3);
     assert_eq!(
-        stats.records,
-        stats.rejected_non_snp + stats.nucleotide_below_minimum() + stats.nucleotide_accepted
+        stats.records_processed,
+        stats.rejected_non_snp + stats.nucleotide_below_minimum() + stats.nucleotide_sites_accepted
     );
     assert!(report.outputs.iter().all(|path| path.is_file()));
 }
 
 #[test]
 fn public_struct_literals_track_documented_configuration_shape() {
-    use vcf2phylip_rs::{filter::Stats, genotype::PartialMissingPolicy, storage::StorageMode};
+    use vcf2phylip_rs::{genotype::PartialMissingPolicy, processing::Stats, storage::StorageMode};
 
     // Deliberately no struct update syntax: track the public shape, including
     // the rate field and optional count; logging adds no required library fields.
@@ -299,11 +299,11 @@ fn public_struct_literals_track_documented_configuration_shape() {
     };
     assert!(cli.validate_mode().is_ok());
     let stats = Stats {
-        records: 7,
+        records_processed: 7,
         rejected_non_snp: 3,
-        nucleotide_accepted: 2,
+        nucleotide_sites_accepted: 2,
         binary_eligible: 0,
-        binary_accepted: 0,
+        binary_sites_accepted: 0,
         nucleotide_missing_calls: 0,
         binary_missing_calls: 0,
         binary_unsupported_ploidy_calls: 0,

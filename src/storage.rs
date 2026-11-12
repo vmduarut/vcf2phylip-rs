@@ -1,7 +1,7 @@
 //! Uniform sample-major tiles in one managed spool; no per-locus/tile index.
 use crate::{
-    filter::ProcessedLocus,
     matrix::{Alignment, Matrix},
+    processing::ProcessedLocus,
 };
 use anyhow::{Context, Result, ensure};
 use std::{
@@ -22,10 +22,11 @@ pub enum StorageMode {
 /// Any append/finish I/O error is terminal: discard the builder rather than retry.
 pub struct DiskMatrix {
     samples: Vec<String>,
-    file: RefCell<NamedTempFile>,
-    buffer: RefCell<Vec<u8>>,
-    width: usize,
-    pending: usize,
+    spool: RefCell<NamedTempFile>,
+    // Reused for tile assembly and, after finish, bounded row reads.
+    tile_buffer: RefCell<Vec<u8>>,
+    tile_width: usize,
+    pending_sites: usize,
     sites: usize,
     finished: bool,
 }
@@ -41,28 +42,28 @@ impl DiskMatrix {
             samples.len()
         );
         // Avoid allocating needlessly large tiles for small sample counts.
-        let width = (budget / samples.len()).min(65536);
-        let size = width
+        let tile_width = (budget / samples.len()).min(65536);
+        let size = tile_width
             .checked_mul(samples.len())
             .context("tile size overflow")?;
-        let mut buffer = Vec::new();
-        buffer.try_reserve_exact(size)?;
+        let mut tile_buffer = Vec::new();
+        tile_buffer.try_reserve_exact(size)?;
         ensure!(
-            buffer.capacity() <= budget,
+            tile_buffer.capacity() <= budget,
             "allocator tile capacity exceeds --memory-limit"
         );
-        buffer.resize(size, 0);
-        let file = match temp_dir {
+        tile_buffer.resize(size, 0);
+        let spool = match temp_dir {
             Some(dir) => NamedTempFile::new_in(dir),
             None => NamedTempFile::new(),
         }
         .context("creating matrix spool in temporary directory")?;
         Ok(Self {
             samples,
-            file: RefCell::new(file),
-            buffer: RefCell::new(buffer),
-            width,
-            pending: 0,
+            spool: RefCell::new(spool),
+            tile_buffer: RefCell::new(tile_buffer),
+            tile_width,
+            pending_sites: 0,
             sites: 0,
             finished: false,
         })
@@ -86,33 +87,34 @@ impl DiskMatrix {
             .context("matrix size overflow")?;
         u64::try_from(bytes).context("matrix file offset overflow")?;
         for (sample, call) in locus.nucleotide.iter().enumerate() {
-            self.buffer.get_mut()[sample * self.width + self.pending] = call.symbol();
+            self.tile_buffer.get_mut()[sample * self.tile_width + self.pending_sites] =
+                call.symbol();
         }
-        self.pending += 1;
+        self.pending_sites += 1;
         self.sites = sites;
-        if self.pending == self.width {
+        if self.pending_sites == self.tile_width {
             self.flush_tile()?;
         }
         Ok(())
     }
 
     fn flush_tile(&mut self) -> Result<()> {
-        if self.pending == 0 {
+        if self.pending_sites == 0 {
             return Ok(());
         }
-        for row in self.buffer.get_mut().chunks(self.width) {
-            self.file
+        for row in self.tile_buffer.get_mut().chunks(self.tile_width) {
+            self.spool
                 .get_mut()
-                .write_all(&row[..self.pending])
+                .write_all(&row[..self.pending_sites])
                 .context("writing matrix spool")?;
         }
-        self.pending = 0;
+        self.pending_sites = 0;
         Ok(())
     }
 
     pub fn finish(&mut self) -> Result<()> {
         self.flush_tile()?;
-        self.file.get_mut().flush()?;
+        self.spool.get_mut().flush()?;
         self.finished = true;
         Ok(())
     }
@@ -128,18 +130,23 @@ impl Alignment for DiskMatrix {
     fn row_chunks(&self, sample: usize, emit: &mut dyn FnMut(&[u8]) -> Result<()>) -> Result<()> {
         ensure!(self.finished, "finish spool before reading");
         ensure!(sample < self.samples.len(), "sample index out of bounds");
-        let mut file = self.file.try_borrow_mut()?;
-        let mut buffer = self.buffer.try_borrow_mut()?;
-        for start in (0..self.sites).step_by(self.width) {
-            let width = self.width.min(self.sites - start);
+        let mut spool = self.spool.try_borrow_mut()?;
+        let mut tile_buffer = self.tile_buffer.try_borrow_mut()?;
+        for start in (0..self.sites).step_by(self.tile_width) {
+            let tile_width = self.tile_width.min(self.sites - start);
             let offset = start
                 .checked_mul(self.samples.len())
-                .and_then(|x| sample.checked_mul(width).and_then(|y| x.checked_add(y)))
+                .and_then(|x| {
+                    sample
+                        .checked_mul(tile_width)
+                        .and_then(|y| x.checked_add(y))
+                })
                 .context("matrix offset overflow")?;
-            file.seek(SeekFrom::Start(u64::try_from(offset)?))?;
-            file.read_exact(&mut buffer[..width])
+            spool.seek(SeekFrom::Start(u64::try_from(offset)?))?;
+            spool
+                .read_exact(&mut tile_buffer[..tile_width])
                 .context("reading matrix spool")?;
-            emit(&buffer[..width])?;
+            emit(&tile_buffer[..tile_width])?;
         }
         Ok(())
     }
@@ -199,18 +206,23 @@ impl Alignment for Storage {
 mod tests {
     use super::*;
     use crate::{
-        filter::ProcessingConfig,
-        genotype::{PartialMissingPolicy, Resolution},
+        genotype::{NucleotideResolution, PartialMissingPolicy},
+        processing::VariantProcessor,
         reader::VariantReader,
     };
     use std::io::Cursor;
 
     fn locus() -> ProcessedLocus {
         let mut reader = VariantReader::from_reader(Cursor::new(b"##fileformat=VCFv4.3\n##FORMAT=<ID=GT,Number=1,Type=String,Description=\"GT\">\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS\nchr1\t1\t.\tA\tC\t.\tPASS\t.\tGT\t0/1\n")).unwrap();
-        ProcessingConfig::new(1, Some(1), PartialMissingPolicy::Missing, Resolution::Iupac)
-            .unwrap()
-            .process(&reader.next_variant().unwrap().unwrap(), 0)
-            .unwrap()
+        VariantProcessor::new(
+            1,
+            Some(1),
+            PartialMissingPolicy::Missing,
+            NucleotideResolution::Iupac,
+        )
+        .unwrap()
+        .process(&reader.next_variant().unwrap().unwrap(), 0)
+        .unwrap()
     }
 
     #[test]
@@ -230,7 +242,7 @@ mod tests {
                 .row_chunks(0, &mut |_| anyhow::bail!("injected callback failure"))
                 .is_err()
         );
-        matrix.file.get_mut().as_file_mut().set_len(0).unwrap();
+        matrix.spool.get_mut().as_file_mut().set_len(0).unwrap();
         assert!(matrix.row_chunks(0, &mut |_| Ok(())).is_err());
         drop(matrix);
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
@@ -242,7 +254,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut matrix = DiskMatrix::new(vec!["S".into()], 1, Some(dir.path())).unwrap();
         // Replace only the open handle; NamedTempFile still owns its original path.
-        *matrix.file.get_mut().as_file_mut() = std::fs::OpenOptions::new()
+        *matrix.spool.get_mut().as_file_mut() = std::fs::OpenOptions::new()
             .write(true)
             .open("/dev/full")
             .unwrap();

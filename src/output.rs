@@ -77,44 +77,47 @@ fn check_target(path: &Path, input: &Path, force: bool) -> Result<Option<fs::Per
     }
 }
 
-pub(crate) struct Staged {
+pub(crate) struct StagedOutput {
     pub file: NamedTempFile,
-    pub path: PathBuf,
+    pub target_path: PathBuf,
 }
 
-impl Staged {
-    pub fn new(path: PathBuf) -> Result<Self> {
-        let file = NamedTempFile::new_in(path.parent().context("output has no parent")?)?;
-        Ok(Self { file, path })
+impl StagedOutput {
+    pub fn new(target_path: PathBuf) -> Result<Self> {
+        let file = NamedTempFile::new_in(target_path.parent().context("output has no parent")?)?;
+        Ok(Self { file, target_path })
     }
 
     pub fn persist(self, input: &Path, force: bool) -> Result<PathBuf> {
         // Recheck target types and input aliases immediately before publication.
         // Rename replaces the directory entry, never writes through a target symlink.
         let finalize = || -> Result<()> {
-            let permissions = check_target(&self.path, input, force)?;
+            let permissions = check_target(&self.target_path, input, force)?;
             if force {
                 if let Some(permissions) = permissions {
                     self.file
                         .as_file()
                         .set_permissions(permissions)
                         .with_context(|| {
-                            format!("preserving output permissions for {}", self.path.display())
+                            format!(
+                                "preserving output permissions for {}",
+                                self.target_path.display()
+                            )
                         })?;
                 }
-                self.file.persist(&self.path)?;
+                self.file.persist(&self.target_path)?;
             } else {
-                self.file.persist_noclobber(&self.path)?;
+                self.file.persist_noclobber(&self.target_path)?;
             }
             Ok(())
         };
         finalize().with_context(|| {
             format!(
                 "finalizing {}; earlier outputs may already have been finalized",
-                self.path.display()
+                self.target_path.display()
             )
         })?;
-        Ok(self.path)
+        Ok(self.target_path)
     }
 }
 
@@ -128,7 +131,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("alignment.phy");
         preflight(std::slice::from_ref(&target), &target, false).unwrap();
-        let mut staged = Staged::new(target.clone()).unwrap();
+        let mut staged = StagedOutput::new(target.clone()).unwrap();
         staged.file.write_all(b"our alignment").unwrap();
         fs::write(&target, b"racing creator").unwrap();
         assert!(staged.persist(&target, false).is_err());
@@ -170,7 +173,7 @@ mod tests {
         let staged: Vec<_> = targets
             .iter()
             .map(|path| {
-                let mut file = Staged::new(path.clone()).unwrap();
+                let mut file = StagedOutput::new(path.clone()).unwrap();
                 file.file.write_all(b"replacement").unwrap();
                 file
             })
@@ -198,7 +201,7 @@ mod tests {
         let target = dir.path().join("alignment.phy");
         fs::write(&input, b"input").unwrap();
         fs::write(&target, b"original").unwrap();
-        let staged = Staged::new(target.clone()).unwrap();
+        let staged = StagedOutput::new(target.clone()).unwrap();
         // Force rename itself to fail, rather than the preflight check.
         fs::remove_file(staged.file.path()).unwrap();
         assert!(staged.persist(&input, true).is_err());

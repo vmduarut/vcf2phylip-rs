@@ -243,28 +243,31 @@ header, detected format, compression status, successful record count and a
 `Variant` containing a noodles record plus optional genotype buffers in sample
 order. An error terminates the reader; callers must handle that error, not
 interpret a subsequent `None` as successful validation.
-`filter::ProcessingConfig::new` is a low-level count-only constructor validating
+`processing::VariantProcessor::new` is a low-level count-only constructor validating
 sample dimensions, positive minimum (legacy `None` default 4, capped), partial
 policy and allele resolution. CLI inspection/conversion instead use
-`Cli::validate_samples` to compute the active threshold once and pass it
-explicitly to this constructor. Public `Cli::min_samples_locus` is now
+`Cli::validate_samples` to compute the active threshold once and expose the
+processor as `ValidatedConfig::processor`. Public `Cli::min_samples_locus` is now
 `Option<usize>`: use `Some(n)` for count-only filtering, with `min_call_rate: None`.
 `Cli::min_call_rate` is now `Option<f64>`: use `Some(rate)` for an explicit rate,
 with `min_samples_locus: None`. Both `None` select the default 0.9 rate; both
 `Some` fail public validation, just as supplying both flags fails CLI parsing.
-`ProcessingConfig::process`
+`VariantProcessor::process`
 returns a `ProcessedLocus` with nucleotide calls, optional binary calls,
-independent called counts and acceptance booleans. It never accumulates a matrix.
-`filter::Stats::observe` accumulates diagnostic counts; absent-GT diagnostics
-remain separate. `genotype` exposes call types/policies and single-call functions;
+independent `nucleotide_called_samples`/`binary_called_samples` counts and
+acceptance booleans. It never accumulates a matrix.
+`processing::Stats::observe` accumulates diagnostic counts, including
+`records_processed`, `nucleotide_sites_accepted` and `binary_sites_accepted`;
+absent-GT diagnostics remain separate. `genotype` exposes call types/policies,
+`NucleotideResolution` and single-call functions;
 `iupac::BaseMask` distinguishes known four-base ambiguity from missing data.
 `cli::Cli` validates mode, sample names and seed pairing.
 `conversion::convert(&Cli)` runs the staged conversion (no-clobber unless `Cli::force`) and returns
-statistics/output paths; `conversion::collect` builds a `matrix::Matrix` from a
-reader and processing config, optionally streaming a site report to `Write`.
+statistics/output paths.
 `convert` never prints and has no observer/callback API. Its `ConversionReport`
-includes sample count, input format/compression, effective minimum and warnings
-captured during conversion, without reopening the input. Callers own warning
+includes `sample_count`, `matrix_payload_bytes`, input format/compression,
+effective minimum and warnings captured during conversion, without reopening the
+input. Callers own warning
 reporting. The CLI prints each returned warning once, including in quiet mode,
 then its final summary only after successful conversion. Failed conversions
 return only the error, so configuration warnings are not reported on failure.
@@ -274,8 +277,8 @@ Both writers now accept any `matrix::Alignment` (existing `&Matrix` calls remain
 valid). Its `samples`, `sites`, and fallible `row_chunks` callback expose bounded
 reads without requiring a full row. `storage::DiskMatrix::{new,append,finish}`
 implements the same trait; finish must precede reading. `Storage` selects either
-backend. The public `collect` API intentionally remains in-memory; CLI conversion
-shares the same filter/collection loop for both backends.
+backend. Library and CLI conversion share the same private processing loop for
+both backends.
 
 ## Scientific contract
 
