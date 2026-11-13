@@ -2,8 +2,7 @@ use std::io::Cursor;
 
 use vcf2phylip_rs::{
     genotype::{
-        BinaryCall, NucleotideCall, NucleotideResolution, PartialMissingPolicy as Policy,
-        nucleotide_call,
+        NucleotideCall, NucleotideResolution, PartialMissingPolicy as Policy, nucleotide_call,
     },
     iupac::BaseMask,
     processing::{Rejection, Stats, VariantProcessor, classify_snp},
@@ -98,7 +97,7 @@ fn phase_dosage_and_positive_ploidies() {
 }
 
 #[test]
-fn partial_missing_policy_is_symmetric_and_binary_is_strict() {
+fn partial_missing_policy_is_symmetric() {
     let v = variant("A", "C", &["0/.", "./0", "./.", ".", "1/.", "0/1"]);
     for (policy, expected, count) in [
         (Policy::Missing, b"NNNNNM", 1),
@@ -112,22 +111,11 @@ fn partial_missing_policy_is_symmetric_and_binary_is_strict() {
         assert_eq!(symbols, expected);
         assert_eq!(result.nucleotide_called_samples, count);
         assert_eq!(result.nucleotide_accepted, count >= 2);
-        assert_eq!(result.binary_called_samples, 1);
-        assert!(!result.binary_accepted);
-        assert_eq!(
-            result
-                .binary
-                .unwrap()
-                .iter()
-                .map(|c| c.symbol())
-                .collect::<Vec<_>>(),
-            b"?????1"
-        );
     }
 }
 
 #[test]
-fn binary_states_and_unsupported_ploidy_have_counters() {
+fn missing_calls_and_positive_ploidies_have_nucleotide_counts() {
     let v = variant(
         "G",
         "T",
@@ -135,35 +123,25 @@ fn binary_states_and_unsupported_ploidy_have_counters() {
             "0/0", "0/1", "1|0", "1/1", "0", "0/1/1", "0/.", ".", "././.",
         ],
     );
-    let result = processor(
-        9,
-        4,
-        Policy::CalledAlleles,
-        NucleotideResolution::Random { seed: 7 },
-    )
-    .process(&v, 1)
-    .unwrap();
+    let result = processor(9, 4, Policy::CalledAlleles, NucleotideResolution::Iupac)
+        .process(&v, 1)
+        .unwrap();
     assert_eq!(
         result
-            .binary
-            .as_ref()
-            .unwrap()
+            .nucleotide
             .iter()
             .map(|c| c.symbol())
             .collect::<Vec<_>>(),
-        b"0112?????"
+        b"GKKTGKGNN"
     );
-    assert_eq!(result.binary_called_samples, 4);
-    assert!(result.binary_accepted);
-    assert_eq!(
-        result.binary.as_ref().unwrap()[4],
-        BinaryCall::UnsupportedPloidy
-    );
+    assert_eq!(result.nucleotide_called_samples, 7);
+    assert!(result.nucleotide_accepted);
     let mut stats = Stats::default();
     stats.observe(&result);
-    assert_eq!(stats.binary_missing_calls, 2);
-    assert_eq!(stats.binary_unsupported_ploidy_calls, 3);
-    assert_eq!(stats.binary_eligible, 1);
+    assert_eq!(stats.records_processed, 1);
+    assert_eq!(stats.nucleotide_missing_calls, 2);
+    assert_eq!(stats.nucleotide_sites_accepted, 1);
+    assert_eq!(stats.nucleotide_below_minimum(), 0);
 }
 
 #[test]
@@ -194,7 +172,7 @@ fn biological_classification_is_case_insensitive_and_not_parse_failure() {
             .unwrap();
         assert!(result.rejection.is_some());
         assert!(!result.nucleotide_accepted);
-        assert!(result.binary.is_none());
+        assert!(result.nucleotide.is_empty());
     }
     for alts in [vec!["a"], vec!["C", "c"], vec!["C", "A"]] {
         assert_eq!(
@@ -205,7 +183,7 @@ fn biological_classification_is_case_insensitive_and_not_parse_failure() {
 }
 
 #[test]
-fn multiallelic_sites_keep_one_dna_locus_but_no_binary_locus() {
+fn multiallelic_sites_keep_one_nucleotide_locus() {
     let v = variant("A", "C,G,T", &["0/1/2/3", "1|2", "3"]);
     let result = processor(3, 3, Policy::Missing, NucleotideResolution::Iupac)
         .process(&v, 20)
@@ -219,8 +197,18 @@ fn multiallelic_sites_keep_one_dna_locus_but_no_binary_locus() {
         b"NST"
     );
     assert!(result.nucleotide_accepted);
-    assert!(!result.binary_accepted);
-    assert!(result.binary.is_none());
+    assert_eq!(result.nucleotide_called_samples, 3);
+}
+
+#[test]
+fn genotype_validation_precedes_biological_rejection() {
+    let mut rejected = variant("A", "AT", &["0/0"]);
+    let out_of_range = variant("A", "C,G", &["2/0"]);
+    rejected.genotypes[0] = out_of_range.genotypes[0].clone();
+    let processor = processor(1, 1, Policy::Missing, NucleotideResolution::Iupac);
+    assert!(processor.process(&rejected, 0).is_err());
+    rejected.genotypes[0] = Some(Default::default());
+    assert!(processor.process(&rejected, 0).is_err());
 }
 
 #[test]
@@ -259,7 +247,7 @@ fn validated_dimensions_and_thresholds() {
 }
 
 #[test]
-fn random_resolution_is_keyed_copy_weighted_and_binary_independent() {
+fn random_resolution_is_keyed_copy_weighted_and_preserves_called_counts() {
     let v = variant(
         "A",
         "C,G,T",
@@ -282,7 +270,7 @@ fn random_resolution_is_keyed_copy_weighted_and_binary_independent() {
             );
         }
         golden.extend(result.nucleotide.iter().map(|c| c.symbol()));
-        // Direct calls and processing (which also computes binary) use identical keys.
+        // Direct calls and processing use identical keys.
         for (sample, gt) in v.genotypes.iter().enumerate() {
             assert_eq!(
                 result.nucleotide[sample],
@@ -314,8 +302,7 @@ fn random_resolution_is_keyed_copy_weighted_and_binary_independent() {
     )
     .process(&biallelic, 0)
     .unwrap();
-    assert_eq!(plain.binary, random.binary);
-    assert_eq!(plain.binary_accepted, random.binary_accepted);
+    assert_eq!(plain.nucleotide_accepted, random.nucleotide_accepted);
     assert_eq!(
         plain.nucleotide_called_samples,
         random.nucleotide_called_samples

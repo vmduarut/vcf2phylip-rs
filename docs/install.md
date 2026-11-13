@@ -49,16 +49,15 @@ done
 ```
 
 Inspection reports `Samples: 4; records: 3`, `Accepted nucleotide loci: 3`
-and `accepted binary loci: 2`. The multiallelic site is eligible for the
-nucleotide alignment but not the binary path; binary counts are diagnostics,
-not an available binary output. Each `diff` is silent on a match. The FASTA
+and `Nucleotide missing calls: 0`. The multiallelic site is eligible for the
+nucleotide alignment. Each `diff` is silent on a match. The FASTA
 contains `alpha: AYW`, `beta: RTR`, `gamma: GCT` and `delta: ATG` (one record
 per sample); the site report lists chr1 positions 1, 2 and 3, each with four
 called samples. The two backends should produce the same files.
 
 Lifecycle/status messages and conversion success summaries go to stderr, not
 stdout (the conversion summary destination intentionally changed). Inspection's
-diagnostic stdout retains existing labels with the active configured minimum/rate
+diagnostic stdout reports nucleotide-only counts with the active configured minimum/rate
 lines and an effective-threshold annotation. Use `--quiet` to suppress informational
 stderr while preserving warnings/errors, or `--verbose` for extra configuration
 and missing-call diagnostics; these flags conflict. `-v` still prints version.

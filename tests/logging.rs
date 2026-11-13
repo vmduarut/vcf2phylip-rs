@@ -302,11 +302,7 @@ fn public_struct_literals_track_documented_configuration_shape() {
         records_processed: 7,
         rejected_non_snp: 3,
         nucleotide_sites_accepted: 2,
-        binary_eligible: 0,
-        binary_sites_accepted: 0,
         nucleotide_missing_calls: 0,
-        binary_missing_calls: 0,
-        binary_unsupported_ploidy_calls: 0,
     };
     assert_eq!(stats.nucleotide_below_minimum(), 2);
     assert_eq!(Stats::default().nucleotide_below_minimum(), 0);

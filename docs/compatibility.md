@@ -50,8 +50,7 @@ are mutually exclusive, even if the rate is 0.9, in either argument order.
 Use `-m 2` for count-only filtering, or `-m 4` for this
 project's prior default. Without `-m`, rate 1 requires all samples and rate 0
 requires at least one; outgroups remain part of the input denominator.
-The effective threshold applies independently to nucleotide and diagnostic
-binary called counts under their existing policies. Output `.min<N>` uses
+The effective threshold applies to nucleotide-called sample counts. Output `.min<N>` uses
 the effective count. Reports show only the active policy. Rates use finite
 `f64` values, with decimal
 integer threshold arithmetic to avoid floating multiplication boundary errors.
@@ -70,12 +69,10 @@ The baseline has behavior that a future scientific converter must not inherit:
 2. Character-based GT interpretation can split multidigit allele indices.
 3. Replacing `<NON_REF>` with REF can manufacture reference support from a
    symbolic/nonreference allele.
-4. Binary-only selection can diverge from nucleotide-path accepted-site
-   counts and the used-site list.
 
 Milestone 1 parses genotype indices numerically and preserves missingness and
 symbolic alleles. Milestone 2 interprets canonical SNP genotypes independently,
-with symmetric partial missingness and independent DNA/binary thresholds.
+with symmetric partial missingness and nucleotide called-sample thresholds.
 Milestone 3 emits nucleotide FASTA/relaxed PHYLIP and used-site output with
 hand-computed synthetic tests, not upstream output-equivalence claims. See the
 [scientific contract](../README.md#scientific-contract) and
@@ -89,3 +86,26 @@ produce identical backend outputs; this is not upstream byte compatibility.
 Scientific inspection remains a separate no-write mode.
 The independently designed implementation and synthetic tests do not copy
 upstream Python algorithms or sequence fixtures.
+
+## Nucleotide-only API change
+
+This is an intentional public library API break, including for struct literals:
+
+- Removed `genotype::BinaryCall` (including its `symbol` method) and
+  `genotype::binary_call`.
+- Removed `processing::ProcessedLocus::{binary,binary_called_samples,binary_accepted}`.
+- Removed `processing::Stats::{binary_eligible,binary_sites_accepted,binary_missing_calls,binary_unsupported_ploidy_calls}`.
+
+Callers should use `NucleotideCall`, `nucleotide_call`, the nucleotide fields of
+`ProcessedLocus`, and the remaining nucleotide/record counters in `Stats`.
+No replacement dosage encoding is provided. Nucleotide eligibility, thresholds,
+partial missingness, arbitrary positive ploidy, IUPAC and seeded copy-weighted
+resolution are unchanged, as are FASTA, relaxed PHYLIP and used-site bytes.
+
+Inspection stdout now contains only nucleotide and input diagnostics: auxiliary
+accepted/eligible/missing/unsupported-ploidy counts are gone. Its threshold line
+is `Minimum called samples: N (effective)`, the acceptance line is
+`Accepted nucleotide loci: N; rejected non-SNP: N`, and the missing-call line is
+`Nucleotide missing calls: N`. Consumers of inspection text must update their
+parsers. CLI help likewise describes only nucleotide calls; unsupported options
+remain unrecognized rather than being accepted or silently ignored.

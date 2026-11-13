@@ -5,7 +5,7 @@ or inspect input and filtering statistics without writing an alignment. This
 independently designed Rust CLI and library streams input records and offers
 in-memory or bounded-cell-buffer disk storage for conversion.
 
-**Available:** FASTA and relaxed PHYLIP. NEXUS/SNAPP output is deferred for now.
+Currently supported outputs are FASTA and relaxed PHYLIP. NEXUS/SNAPP output is not implemented and may be considered in a future release.
 Exact upstream output compatibility is not claimed.
 
 Version 0.1.0 has not been published; no registry package, container image or
@@ -90,8 +90,8 @@ transitively, and tempfile brings randomness dependencies for staging filenames.
   called sample and `-m 2` requires two; the implicit default rate does not apply.
   Without `-m`, the effective minimum is
   `max(1, ceil(rate × input sample count))`, using all header samples (including
-  outgroups). The effective count applies independently to nucleotide-called and
-  binary-encodable sample counts. `-m 4` reproduces the previous count-only default.
+  outgroups). The effective count applies to nucleotide-called sample counts.
+  `-m 4` reproduces the previous count-only default.
   Neither option supplied means rate-based filtering at 0.9.
 - `-o/--outgroup` requires an exact name; repeat it for multiple names, in
   requested order. Unknown or duplicate requests are errors. No comma/semicolon
@@ -107,8 +107,9 @@ the active threshold policy (absolute minimum or call rate/percentage) and effec
 count, then successful filter totals, persisted output paths and
 elapsed wall time. Conversion summaries previously went to stdout; this is an
 intentional destination change. Conversion stdout is now empty; inspection's
-existing diagnostic stdout labels remain, with the active configured minimum/rate
-lines and an effective-threshold annotation.
+diagnostic stdout reports nucleotide-only counts, with the active configured
+minimum/rate lines and an effective-threshold annotation (see the
+[API compatibility note](docs/compatibility.md#nucleotide-only-api-change)).
 
 `--quiet` suppresses informational messages, never warnings or errors. `--verbose`
 adds configuration and missing-call diagnostics; it conflicts with `--quiet`.
@@ -131,8 +132,8 @@ the command fails without a success summary (see output safety below).
 ## Conversion and output safety
 
 Without `--inspect`, relaxed sequential PHYLIP is the default. `-f` adds FASTA;
-`-p -f` selects FASTA only. `-p` alone is an error. The reserved `-n` and `-b`
-flags fail before output effects. Both writers use the same nucleotide matrix.
+`-p -f` selects FASTA only. `-p` alone is an error.
+Both writers use the same nucleotide matrix.
 PHYLIP starts with `S L`, then full names separated from unwrapped sequences by
 two spaces. FASTA wraps sequence lines at 80 bases. Identifiers retain their
 exact UTF-8 bytes: no truncation, cleaning, escaping or remapping. Empty/duplicate
@@ -186,8 +187,8 @@ cleanup after SIGKILL, or protection from a hostile directory owner is promised.
 
 ### Storage and resource limits
 
-The memory backend stores one growable `Vec<u8>` per sample, no second transposed matrix
-or binary matrix. Payload is S × L bytes, with checked dimensions; allocator
+The memory backend stores one growable `Vec<u8>` per sample, no second transposed matrix.
+Payload is S × L bytes, with checked dimensions; allocator
 capacity, sample names, header/current record, metadata and I/O buffers add RAM.
 For example 1,000 samples × 1,000,000 retained loci need at least 1 GB just for
 sequence payload. Success reports payload bytes, **not peak RAM**. Memory is
@@ -253,13 +254,15 @@ processor as `ValidatedConfig::processor`. Public `Cli::min_samples_locus` is no
 with `min_samples_locus: None`. Both `None` select the default 0.9 rate; both
 `Some` fail public validation, just as supplying both flags fails CLI parsing.
 `VariantProcessor::process`
-returns a `ProcessedLocus` with nucleotide calls, optional binary calls,
-independent `nucleotide_called_samples`/`binary_called_samples` counts and
-acceptance booleans. It never accumulates a matrix.
+returns a `ProcessedLocus` with nucleotide calls, `nucleotide_called_samples`,
+`nucleotide_accepted` and an optional biological rejection. It never accumulates
+a matrix. The [nucleotide-only API change](docs/compatibility.md#nucleotide-only-api-change)
+removes the former auxiliary call API and fields.
 `processing::Stats::observe` accumulates diagnostic counts, including
-`records_processed`, `nucleotide_sites_accepted` and `binary_sites_accepted`;
+`records_processed`, `rejected_non_snp`, `nucleotide_sites_accepted` and
+`nucleotide_missing_calls`;
 absent-GT diagnostics remain separate. `genotype` exposes call types/policies,
-`NucleotideResolution` and single-call functions;
+`NucleotideResolution` and `nucleotide_call`;
 `iupac::BaseMask` distinguishes known four-base ambiguity from missing data.
 `cli::Cli` validates mode, sample names and seed pairing.
 `conversion::convert(&Cli)` runs the staged conversion (no-clobber unless `Cli::force`) and returns
@@ -291,9 +294,8 @@ still requires one call and rate 1 requires every sample. Rates parse as finite
 `f64`; the
 threshold calculation uses integer arithmetic on its canonical shortest decimal
 representation, avoiding binary multiplication/ceil artifacts such as
-`0.07 × 100` spuriously requiring eight rather than seven calls. Nucleotide and
-diagnostic binary paths use the same effective count, but their own called
-criteria below; neither is based merely on non-`N` characters in output.
+`0.07 × 100` spuriously requiring eight rather than seven calls. Called status
+uses the criteria below, not merely non-`N` characters in output.
 
 By default, a genotype with more than one distinct known base is represented
 by its IUPAC ambiguity code: for example, A/G becomes `R` and C/T becomes `Y`.
@@ -317,14 +319,8 @@ calls depend on the policy below; `--resolve-IUPAC` changes this representation.
   copies and counts a genotype with at least one known copy. `0/.` and `./0`
   always have identical called status. Fully missing/absent GT is never REF.
   No lowercase uncertainty encoding is used.
-- Binary eligibility requires exactly REF + one distinct canonical ALT.
-  Only fully called diploids encode: 0/0=0, 0/1 or 1/0=1, 1/1=2. Partial or
-  missing calls and unsupported ploidies emit `?`; counters separate missing
-  diploid/unknown-ploidy calls from unsupported known ploidies (ploidy takes
-  precedence, including all-missing non-diploids). Only encodable calls count
-  toward the binary threshold. Nucleotide policies never alter binary calls.
-- Both eligibility/threshold paths always run, independent of output
-  selections. Multiallelic SNPs can pass DNA but never binary. Inspection prints
+- Eligibility and threshold assessment always run, independent of output
+  selections. Multiallelic SNPs remain one nucleotide locus. Inspection prints
   accepted locus counts, not alignment files. Missing-call counters include
   eligible sites even if their threshold fails, never biologically rejected sites.
 - `-r`/`--resolve-IUPAC` requires an explicit `--seed <u64>`; a seed without `-r`

@@ -82,21 +82,16 @@ fn run(args: Args) -> Result<()> {
         println!("Minimum call rate: {rate} ({:.2}%)", rate * 100.0);
     }
     println!(
-        "Minimum called samples: {} (effective; applied independently to nucleotide and binary loci)",
+        "Minimum called samples: {} (effective)",
         config.minimum_samples
     );
     println!(
-        "Accepted nucleotide loci: {}; accepted binary loci: {}; binary eligible: {}; rejected non-SNP: {}",
-        stats.nucleotide_sites_accepted,
-        stats.binary_sites_accepted,
-        stats.binary_eligible,
-        stats.rejected_non_snp
+        "Accepted nucleotide loci: {}; rejected non-SNP: {}",
+        stats.nucleotide_sites_accepted, stats.rejected_non_snp
     );
     println!(
-        "Nucleotide missing calls: {}; binary missing calls: {}; binary unsupported-ploidy calls: {}",
-        stats.nucleotide_missing_calls,
-        stats.binary_missing_calls,
-        stats.binary_unsupported_ploidy_calls
+        "Nucleotide missing calls: {}",
+        stats.nucleotide_missing_calls
     );
     println!(
         "Nucleotide partial policy: {:?}; random seed: {:?}",

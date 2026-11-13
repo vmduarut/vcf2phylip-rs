@@ -190,10 +190,8 @@ fn independent_bcf_mixed_ploidy_parsing_counts_and_conversion() {
             assert_eq!(stats.records_processed, 2);
             assert_eq!(stats.nucleotide_sites_accepted, 2);
             assert_eq!(stats.nucleotide_missing_calls, missing);
-            assert_eq!(stats.binary_eligible, 2);
-            assert_eq!(stats.binary_sites_accepted, 0);
-            assert_eq!(stats.binary_missing_calls, 2);
-            assert_eq!(stats.binary_unsupported_ploidy_calls, 4);
+            assert_eq!(stats.rejected_non_snp, 0);
+            assert_eq!(stats.nucleotide_below_minimum(), 0);
             assert_eq!(
                 std::fs::read_to_string(dir.path().join("input.min2.used_sites.tsv")).unwrap(),
                 format!(
@@ -485,6 +483,47 @@ fn config_validates_names_thresholds_and_reserved_flags() {
 }
 
 #[test]
+fn inspection_reports_exact_nucleotide_counts() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("input.vcf");
+    std::fs::write(
+        &input,
+        data(
+            "A\tB",
+            concat!(
+                "chr1\t1\t.\tA\tC,G,T\t.\tPASS\t.\tGT\t0/1/2/3\t3\n",
+                "chr1\t2\t.\tA\tC\t.\tPASS\t.\tGT\t0/.\t./.\n",
+                "chr1\t3\t.\tA\tAT\t.\tPASS\t.\tGT\t0/0\t0/1\n",
+                "chr1\t4\t.\tA\tC\t.\tPASS\t.\tDP\t2\t4\n",
+            ),
+        ),
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_vcf2phylip-rs"))
+        .arg("-i")
+        .arg(&input)
+        .args(["--inspect", "--quiet", "-m", "2"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        concat!(
+            "Inspection only; scientific eligibility assessed, no alignment outputs created.\n",
+            "Format: Vcf; gzip/BGZF: false\n",
+            "Samples: 2; records: 4; absent GT calls (unknown ploidy): 2\n",
+            "Configured absolute minimum called samples: 2\n",
+            "Minimum called samples: 2 (effective)\n",
+            "Accepted nucleotide loci: 1; rejected non-SNP: 1\n",
+            "Nucleotide missing calls: 4\n",
+            "Nucleotide partial policy: Missing; random seed: None\n",
+        )
+    );
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+}
+
+#[test]
 fn actual_cli_inspection_never_creates_output() {
     let dir = tempfile::tempdir().unwrap();
     let input = dir.path().join("input.wrong-extension");
@@ -516,7 +555,7 @@ fn actual_cli_inspection_never_creates_output() {
     ]);
     assert!(seeded.status.success());
     let text = String::from_utf8(seeded.stdout).unwrap();
-    assert!(text.contains("Accepted nucleotide loci: 1; accepted binary loci: 1"));
+    assert!(text.contains("Accepted nucleotide loci: 1; rejected non-SNP: 0"));
     assert!(text.contains("random seed: Some(42)"));
     assert!(!run(&["--inspect", "--seed", "42"]).status.success());
     assert!(
@@ -962,7 +1001,7 @@ fn actual_cli_default_conversion_and_unsupported_mode_preflight() {
             .unwrap()
     };
     assert!(
-        !run(&["-n", "--output-folder", "never-created"])
+        !run(&["--unknown-option", "--output-folder", "never-created"])
             .status
             .success()
     );
@@ -1030,8 +1069,8 @@ fn reader_to_processing_transport_equivalence_and_original_record_order() {
         assert_eq!(stats.records_processed, 4);
         assert_eq!(stats.rejected_non_snp, 1);
         assert_eq!(stats.nucleotide_sites_accepted, 2);
-        assert_eq!(stats.binary_eligible, 2);
-        assert_eq!(stats.binary_sites_accepted, 1);
+        assert_eq!(stats.nucleotide_missing_calls, 2);
+        assert_eq!(stats.nucleotide_below_minimum(), 1);
         if let Some(expected) = &baseline {
             assert_eq!(&results, expected);
         } else {

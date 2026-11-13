@@ -2,9 +2,9 @@ use clap::{CommandFactory, Parser, error::ErrorKind};
 use vcf2phylip_rs::cli::Cli;
 
 #[test]
-fn nexus_options_are_not_in_help() {
+fn unknown_options_are_not_in_help() {
     let help = Cli::command().render_long_help().to_string();
-    for option in ["-n", "--nexus", "-b", "--nexus-binary"] {
+    for option in ["-z", "--unknown-option"] {
         assert!(
             !help
                 .split_whitespace()
@@ -15,10 +15,10 @@ fn nexus_options_are_not_in_help() {
 }
 
 #[test]
-fn nexus_options_are_unknown() {
-    for option in ["-n", "--nexus", "-b", "--nexus-binary"] {
+fn unknown_options_are_rejected() {
+    for option in ["-z", "--unknown-option"] {
         let error = Cli::try_parse_from(["vcf2phylip", "-i", "input.vcf", option])
-            .expect_err("removed option should be rejected");
+            .expect_err("unknown option should be rejected");
         assert_eq!(error.kind(), ErrorKind::UnknownArgument, "option {option}");
     }
 }

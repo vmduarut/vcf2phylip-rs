@@ -38,8 +38,8 @@ pub struct Cli {
     #[arg(short = 'm', long, value_parser = positive_usize, conflicts_with = "min_call_rate")]
     pub min_samples_locus: Option<usize>,
     /// Minimum fraction of all input samples called per locus (finite 0..=1).
-    /// Requires ceil(rate * input samples), independently for nucleotide and
-    /// diagnostic binary calls, with at least one called sample required.
+    /// Requires ceil(rate * input samples) nucleotide calls,
+    /// with at least one called sample required.
     /// Defaults to 0.9 (90%) when neither threshold option is supplied.
     /// Cannot be combined with -m/--min-samples-locus.
     #[arg(long, value_parser = parse_call_rate)]
@@ -68,7 +68,7 @@ pub struct Cli {
     /// Explicit reproducible seed for --resolve-IUPAC.
     #[arg(long)]
     pub seed: Option<u64>,
-    /// Treatment of partially missing nucleotide genotypes (binary is always strict).
+    /// Treatment of partially missing nucleotide genotypes.
     #[arg(long, value_enum, default_value = "missing")]
     pub partial_missing: PartialMissingPolicy,
     /// Write retained nucleotide site coordinates and called sample counts.

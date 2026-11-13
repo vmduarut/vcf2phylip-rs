@@ -43,22 +43,6 @@ impl NucleotideCall {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum BinaryCall {
-    Called(u8),
-    Missing,
-    UnsupportedPloidy,
-}
-
-impl BinaryCall {
-    pub fn symbol(self) -> u8 {
-        match self {
-            Self::Called(n) => b'0' + n,
-            _ => b'?',
-        }
-    }
-}
-
 /// `allele_base_masks` contains one single-bit canonical mask per REF/ALT index.
 /// Keys must be the original zero-based record ordinal and sample index.
 pub fn nucleotide_call(
@@ -102,28 +86,6 @@ pub fn nucleotide_call(
     Ok(NucleotideCall::Called(
         BaseMask::new(bits).context("invalid nucleotide mask")?,
     ))
-}
-
-/// Biallelic sites only. Partial policy and nucleotide resolution never apply.
-pub fn binary_call(gt: Option<&Genotype>) -> Result<BinaryCall> {
-    let Some(gt) = gt else {
-        return Ok(BinaryCall::Missing);
-    };
-    let alleles = gt.as_ref();
-    ensure!(!alleles.is_empty(), "zero-ploidy genotype");
-    for allele in alleles {
-        ensure!(
-            allele.position().is_none_or(|i| i < 2),
-            "non-biallelic genotype index"
-        );
-    }
-    if alleles.len() != 2 {
-        return Ok(BinaryCall::UnsupportedPloidy);
-    }
-    match (alleles[0].position(), alleles[1].position()) {
-        (Some(a), Some(b)) => Ok(BinaryCall::Called((a + b) as u8)),
-        _ => Ok(BinaryCall::Missing),
-    }
 }
 
 // Stable v1 scheme: ChaCha20 key = seed LE || record ordinal LE || 16 zero bytes;

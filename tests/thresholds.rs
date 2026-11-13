@@ -184,15 +184,15 @@ fn inspection_memory_disk_and_filenames_share_threshold_and_call_policy() {
         "chr1\t5\t.\tA\tC\t.\tPASS\t.\tGT\t./.\t./.\t./.\n",
         "chr1\t6\t.\tA\tAT\t.\tPASS\t.\tGT\t0/0\t./.\t./.\n",
     )).unwrap();
-    for (flags, minimum, dna, binary, positions) in [
-        (vec![], 3, 1, 1, vec![1]),
-        (vec!["-m", "1"], 1, 4, 4, vec![1, 2, 3, 4]),
-        (vec!["-m", "2"], 2, 3, 2, vec![1, 2, 3]),
-        (vec!["--min-samples-locus", "1"], 1, 4, 4, vec![1, 2, 3, 4]),
-        (vec!["--min-call-rate", "0.9"], 3, 1, 1, vec![1]),
-        (vec!["-m", "4"], 3, 1, 1, vec![1]),
-        (vec!["--min-call-rate", "0"], 1, 4, 4, vec![1, 2, 3, 4]),
-        (vec!["--min-call-rate", "0.66"], 2, 3, 2, vec![1, 2, 3]),
+    for (flags, minimum, dna, positions) in [
+        (vec![], 3, 1, vec![1]),
+        (vec!["-m", "1"], 1, 4, vec![1, 2, 3, 4]),
+        (vec!["-m", "2"], 2, 3, vec![1, 2, 3]),
+        (vec!["--min-samples-locus", "1"], 1, 4, vec![1, 2, 3, 4]),
+        (vec!["--min-call-rate", "0.9"], 3, 1, vec![1]),
+        (vec!["-m", "4"], 3, 1, vec![1]),
+        (vec!["--min-call-rate", "0"], 1, 4, vec![1, 2, 3, 4]),
+        (vec!["--min-call-rate", "0.66"], 2, 3, vec![1, 2, 3]),
         (
             vec![
                 "--min-call-rate",
@@ -202,7 +202,6 @@ fn inspection_memory_disk_and_filenames_share_threshold_and_call_policy() {
             ],
             3,
             2,
-            1,
             vec![1, 3],
         ),
     ] {
@@ -227,7 +226,6 @@ fn inspection_memory_disk_and_filenames_share_threshold_and_call_policy() {
             .unwrap();
             let report = convert(&cli).unwrap();
             assert_eq!(report.stats.nucleotide_sites_accepted, dna);
-            assert_eq!(report.stats.binary_sites_accepted, binary);
             let bytes = report
                 .outputs
                 .iter()
@@ -282,7 +280,7 @@ fn inspection_memory_disk_and_filenames_share_threshold_and_call_policy() {
         );
         assert!(
             stdout.contains(&format!(
-                "Accepted nucleotide loci: {dna}; accepted binary loci: {binary}"
+                "Accepted nucleotide loci: {dna}; rejected non-SNP: 1"
             )),
             "{stdout}"
         );
